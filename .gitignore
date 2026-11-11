@@ -1,0 +1,47 @@
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# SwiftPM and Xcode build products / per-user state
+.build/
+.swiftpm/
+DerivedData/
+build/
+dist/
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+*.xcscmblueprint
+*.xccheckout
+*.dSYM/
+*.xcarchive/
+*.app/
+
+# Local signing configuration, credentials and environment
+.signing-identity
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# Editor and local assistant state
+.idea/
+.vscode/
+.codex/
+.agents/
+*.swp
+*.swo
+*~
+
+# Local diagnostic output
+*.log
+coverage/

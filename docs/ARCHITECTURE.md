@@ -1,0 +1,61 @@
+# 架构与生命周期
+
+## 模块
+```text
+FeatherApp / AppDelegate
+├── NSStatusItem：左键截图 / 右键菜单
+├── AppModel → UserDefaults（设置）
+├── PreferencesView → ShortcutSettingsView（按需窗口）
+├── HotKeyService → Carbon RegisterEventHotKey
+├── ShortcutRecorder → 当前窗口临时 NSEvent 本地监听 → CaptureShortcut
+└── CaptureCoordinator → ScreenCaptureService → ScreenCaptureKit 单次帧
+    └── SelectionView：冻结画面 / 选区 / 标注
+        ├── CaptureToolbar → EditorDocument
+        └── FeatherCore
+            ├── CaptureGeometry / SelectionGeometry
+            ├── Annotation / AnnotationHistory
+            ├── AnnotationRenderer
+            └── PNGExporter
+```
+
+## 状态与窗口
+- 启动设置 accessory 激活策略，不创建工作台或 Dock 图标。NSStatusItem 分发左右点击，右键时弹出 NSMenu。
+- 设置窗口按需创建；关闭时释放其内容视图，录制器通过窗口通知/onDisappear 清理监听。
+- 一次截图对应一个 CaptureCoordinator：截屏 → 多屏框选 → 保留目标屏覆盖层并添加工具条 → 输出或取消 → 释放。
+- 框选用 screenSaver 层级，选中后降为 floating，文字和保存面板使用 modalPanel 层级。
+- 重复截图聚焦现有会话，不创建第二份图像或第二组覆盖层。导出期间阻止取消与退出。
+- UI、AppKit 渲染和窗口管理均为 @MainActor；ScreenCaptureKit 异步取单帧，不创建 SCStream。
+- PNG 使用一致的 AppKit 渲染器和 ImageIO 编码；磁盘写入在后台 Task 完成。
+- 快速保存先写同目录暂存文件，再用 renamex_np(RENAME_EXCL) 原子发布，拒绝覆盖，失败清理暂存文件。
+- 保存成功后按设置复制，所有输出成功才关闭；失败继续保留图片、选区和标注。
+- 取消标志、Task 取消和 finished 保证一次会话至多回调一次。
+- 激活时预检查仅更新 UI；主动截图直接调用 ScreenCaptureKit。真正 userDeclined 才显示授权恢复提示，普通捕捉失败独立处理，没有后台轮询。
+
+## 快捷键
+- 录制临时监听当前设置窗口，完成/取消/失焦立即清理；无全局按键监听或事件注入。
+- 原热键在录制期间保持注册，Carbon 回调用于接受原组合，屏蔽截图动作。
+- 新热键先注册成功再释放旧热键；JSON 编码和注册均成功后才更新持久化设置。
+- 注册冲突保留旧组合；新旧键值比较仅使用物理键码和修饰键。
+
+## 坐标与选区变化
+- SelectionView 采用左上角原点的 flipped 坐标，显示器全局位置仅用于放置覆盖窗口。
+- 截图宽高 = 显示器逻辑大小 × backingScaleFactor；分别计算 X/Y 比例，裁剪向外像素取整。
+- 八个手柄固定对边，保留至少 4 逻辑点；移动保持大小，并限制到当前屏幕。
+- 选区调整从原始冻结图重裁剪；标注和重做栈偏移量为「旧裁剪像素原点 − 新原点」，保持屏幕锚点。
+- 标注与导出使用原图像素；预览只缩放上下文，工具条独立于图片渲染，不进入 PNG。
+
+## 内存与隐私
+- 框选前暂存逐屏静态帧；选定后释放其他显示器覆盖层，保留目标屏原图以支持调整选区。
+- 完成或取消关闭并释放全部截图窗口、图像和工具条；空闲时不截图、不轮询、不联网。
+- 无历史列表、数据库、HTTP API、服务端、上传、自动更新器或遥测。
+- 截图权限由系统 TCC 管理，不修改授权数据库。
+- 未保存内容仅存在内存；Esc/×/右键选区立即放弃，退出应用也不会自动保存。
+
+## 构建与发行
+- Swift Package 构建执行文件，脚本将执行文件和本地化 bundle 装入标准 .app。
+- 默认按构建机器架构生成；源码支持 arm64 和 x86_64，需分别实机验证。
+- 签名从 CODE_SIGN_IDENTITY 或本机 .signing-identity 读取，默认要求固定身份；正式发行需要 Developer ID Application 和公证。
+- 构建在暂存 app 内完成并验证签名，成功后替换 dist 产物，仅保留一个 .build/Feather-previous.app 回滚副本；不会原地覆写运行中的可执行文件。
+- ad-hoc 仅允许显式选择并输出警告；不通过自定义宽松 designated requirement 掩盖签名变化。
+- 保持 bundle ID com.feather.screenshot；稳定安装路径和签名身份可降低重新授权概率。
+- 系统权限、多屏和多版本交互必须按 TESTING.md 验收。
