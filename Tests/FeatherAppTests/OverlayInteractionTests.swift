@@ -67,6 +67,91 @@ struct OverlayInteractionTests {
     #expect(cancelled)
   }
 
+  @Test func doubleClickCopiesAnnotatedSelectionAndClosesOnce() throws {
+    try withSelection { view, document, window, pasteboard in
+      document.add(
+        Annotation(
+          tool: .redact, points: [CGPoint(x: 10, y: 10), CGPoint(x: 40, y: 40)],
+          color: InkColor.palette[0]))
+      let annotations = document.history.annotations
+      var closeCount = 0
+      document.onClose = {
+        #expect(pasteboard.data(forType: .png) != nil)
+        closeCount += 1
+      }
+      try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 1)
+      #expect(closeCount == 0 && pasteboard.data(forType: .png) == nil)
+      try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 2)
+      #expect(closeCount == 1 && document.error == nil)
+      #expect(document.history.annotations == annotations)
+      #expect(document.savedURL == nil)
+      let data = try #require(pasteboard.data(forType: .png))
+      let image = try #require(NSBitmapImageRep(data: data))
+      #expect(image.pixelsWide == 300 && image.pixelsHigh == 200)
+      #expect(image.colorAt(x: 20, y: 20)?.redComponent == 0)
+      #expect((image.colorAt(x: 60, y: 60)?.redComponent ?? 0) > 0.9)
+    }
+  }
+
+  @Test func doubleClickOutsideOnHandlesWhileDrawingOrExportingDoesNotConfirm() throws {
+    try withSelection { view, document, window, pasteboard in
+      var closeCount = 0
+      document.onClose = { closeCount += 1 }
+      try click(view, window: window, at: CGPoint(x: 500, y: 200), count: 2)
+      try click(view, window: window, at: CGPoint(x: 102, y: 102), count: 2)
+      document.isExporting = true
+      try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 2)
+      document.isExporting = false
+      for tool in [AnnotationTool.rectangle, .pen] {
+        document.selectTool(tool)
+        try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 1)
+        try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 2)
+      }
+      #expect(closeCount == 0 && pasteboard.data(forType: .png) == nil)
+      #expect(document.history.annotations.count == 2)
+      #expect(document.history.annotations.allSatisfy { $0.tool == .pen })
+    }
+  }
+
+  /// 构造未显示的选区与独立剪贴板，结束后释放资源；不访问桌面、系统剪贴板或真实用户偏好。
+  private func withSelection(
+    _ body: (SelectionView, EditorDocument, NSWindow, NSPasteboard) throws -> Void
+  ) throws {
+    _ = NSApplication.shared
+    let suite = "FeatherDoubleClickTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    let context = try #require(
+      CGContext(
+        data: nil, width: 800, height: 600, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 800, height: 600))
+    let image = try #require(context.makeImage())
+    let rect = CGRect(x: 100, y: 100, width: 300, height: 200)
+    let document = EditorDocument(
+      image: try #require(image.cropping(to: rect)), appModel: AppModel(defaults: defaults),
+      pasteboard: pasteboard)
+    let window = NSWindow(
+      contentRect: CGRect(x: 0, y: 0, width: 800, height: 600), styleMask: .borderless,
+      backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    let view = SelectionView(image: image, frame: window.contentLayoutRect)
+    window.contentView = view
+    view.beginEditing(document, pixelRect: rect)
+    try body(view, document, window, pasteboard)
+  }
+
+  private func click(_ view: SelectionView, window: NSWindow, at point: CGPoint, count: Int) throws
+  {
+    view.mouseDown(with: try mouse(.leftMouseDown, point: point, window: window, clickCount: count))
+    view.mouseUp(with: try mouse(.leftMouseUp, point: point, window: window, clickCount: count))
+  }
+
   private func drag(_ view: SelectionView, window: NSWindow, from start: CGPoint, to end: CGPoint)
     throws
   {
@@ -75,12 +160,13 @@ struct OverlayInteractionTests {
     view.mouseUp(with: try mouse(.leftMouseUp, point: end, window: window))
   }
 
-  private func mouse(_ type: NSEvent.EventType, point: CGPoint, window: NSWindow) throws -> NSEvent
-  {
+  private func mouse(
+    _ type: NSEvent.EventType, point: CGPoint, window: NSWindow, clickCount: Int = 1
+  ) throws -> NSEvent {
     try #require(
       NSEvent.mouseEvent(
         with: type, location: CGPoint(x: point.x, y: 600 - point.y), modifierFlags: [],
         timestamp: 0, windowNumber: window.windowNumber, context: nil,
-        eventNumber: 1, clickCount: 1, pressure: 1))
+        eventNumber: 1, clickCount: clickCount, pressure: 1))
   }
 }

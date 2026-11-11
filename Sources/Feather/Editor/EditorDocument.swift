@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 final class EditorDocument: NSObject, ObservableObject {
   @Published private(set) var image: CGImage
   let appModel: AppModel
+  private let pasteboard: NSPasteboard
   @Published var tool: AnnotationTool = .arrow
   @Published var isSelectingRegion = true
   @Published var color = InkColor.palette[0]
@@ -19,9 +20,12 @@ final class EditorDocument: NSObject, ObservableObject {
   @Published var savedURL: URL?
   var onClose: (() -> Void)?
 
-  init(image: CGImage, appModel: AppModel) {
+  /// 创建单张截图会话；默认使用系统剪贴板，测试可传入独立剪贴板以避免覆盖用户内容。
+  /// 初始化仅保存图像、设置和输出目标，不读取屏幕、不写入文件或剪贴板。
+  init(image: CGImage, appModel: AppModel, pasteboard: NSPasteboard = .general) {
     self.image = image
     self.appModel = appModel
+    self.pasteboard = pasteboard
   }
 
   /// 选择标注工具；按钮再次点击当前工具可回到选区移动模式，数字键则保持绘图模式。
@@ -48,13 +52,13 @@ final class EditorDocument: NSObject, ObservableObject {
     status = nil
   }
 
-  /// 像素渲染后写入 PNG 剪贴板；失败保留会话，成功可按调用参数关闭窗口。
+  /// 像素渲染后写入会话指定的 PNG 剪贴板；失败保留会话，成功可按调用参数关闭窗口。
   func copy(closeAfter: Bool = false) {
     guard !isExporting else { return }
     do {
       let data = try AnnotationRenderer.png(image: image, annotations: history.annotations)
-      NSPasteboard.general.clearContents()
-      guard NSPasteboard.general.setData(data, forType: .png) else {
+      pasteboard.clearContents()
+      guard pasteboard.setData(data, forType: .png) else {
         error = L.text("copy.failed")
         return
       }
@@ -96,8 +100,8 @@ final class EditorDocument: NSObject, ObservableObject {
         savedURL = url
         status = L.text("save.success")
         if appModel.copyAfterSave {
-          NSPasteboard.general.clearContents()
-          if !NSPasteboard.general.setData(data, forType: .png) {
+          pasteboard.clearContents()
+          if !pasteboard.setData(data, forType: .png) {
             error = L.text("copy.failedAfterSave")
           }
         }

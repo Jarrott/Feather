@@ -28,6 +28,7 @@ FeatherApp / AppDelegate
 - PNG 使用一致的 AppKit 渲染器和 ImageIO 编码；磁盘写入在后台 Task 完成。
 - 快速保存先写同目录暂存文件，再用 renamex_np(RENAME_EXCL) 原子发布，拒绝覆盖，失败清理暂存文件。
 - 保存成功后按设置复制，所有输出成功才关闭；失败继续保留图片、选区和标注。
+- 确认按钮、键盘确认和移动模式双击共用 EditorDocument.copy(closeAfter: true)。双击根据系统 NSEvent.clickCount 识别，不添加计时器；边角缩放与绘图优先保留原行为。文档默认写系统剪贴板，测试注入独立剪贴板验证实际 PNG。
 - 取消标志、Task 取消和 finished 保证一次会话至多回调一次。
 - 激活时预检查仅更新 UI；主动截图直接调用 ScreenCaptureKit。真正 userDeclined 才显示授权恢复提示，普通捕捉失败独立处理，没有后台轮询。
 

@@ -21,6 +21,7 @@
 | ScreenCaptureService.capture / isPermissionDenied | 是否包含鼠标 / Error | 静态屏幕快照数组 / 严格匹配 SCStreamErrorDomain 与 userDeclined | CaptureCoordinator、AppDelegate、测试 |
 | CaptureCoordinator.start / focus / cancel | 初始化参数 AppModel、可注入截图提供器 | onComplete() / onError(Error)；会话内持有文档 | AppDelegate |
 | SelectionView.beginEditing | EditorDocument、裁剪像素 CGRect | 在同一覆盖层添加工具条，观察状态变化 | CaptureCoordinator、测试 |
+| EditorDocument.init | CGImage、AppModel、pasteboard（默认 .general） | 创建截图会话；可注入独立剪贴板用于隔离测试，初始化无输出副作用 | CaptureCoordinator、测试 |
 | EditorDocument.updateCrop | 新 CGImage、标注像素偏移 | 更新图片和历史坐标；导出中拒绝修改 | SelectionView |
 | EditorDocument.selectTool | AnnotationTool、toggleSelection（默认 false） | 按钮可再次选中同一工具以返回移动模式；数字键只选择工具；导出中无操作 | CaptureToolbar、SelectionView、测试 |
 | EditorDocument.save / copy | asNewLocation、closeAfter / closeAfter | 成功按参数 onClose；失败保留会话，发布错误 | 工具条、SelectionView、测试 |
@@ -39,7 +40,8 @@
 - 启动优先读取有效 customShortcut，否则读取旧 shortcut 预设字符串，最后回退 ⇧⌘2。旧键保留，注册失败不写入候选值。
 - 1.1.0 不再使用最近记录偏好，旧值被忽略；不删除或修改用户已有图片。
 - 同一会话中的选区调整和标注仅存在内存；取消直接释放，没有自动保存或恢复。
-- 保存按钮和键盘调用方均明确传入 closeAfter: true，系统保存面板取消和导出失败不会调用 onClose。
+- 保存/确认按钮、键盘和移动模式双击调用方均明确传入 closeAfter: true；系统保存面板取消和导出失败不会调用 onClose。
 
 - 1.1.1：权限预检查仅用于设置状态提示，不阻断主动截图；实际拒绝将状态置为未授权，普通错误不改权限，已取消请求的延迟错误不弹提示。
 - 1.2.0：工具属性使用独立浮层，未修改截图提供器、权限处理、全局快捷键注册或偏好数据格式。
+- 1.2.1：移动模式双击选区内部复用 EditorDocument.copy(closeAfter: true)，不新增输出格式；剪贴板可在初始化时注入，现有调用方默认行为不变。

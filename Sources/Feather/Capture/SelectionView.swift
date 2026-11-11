@@ -138,6 +138,8 @@ final class SelectionView: NSView {
     }
   }
 
+  /// 按下时分流框选、缩放、移动与绘图；移动模式下双击选区内部复用确认按钮的复制并关闭流程。
+  /// 边角手柄优先缩放，绘图模式不解释双击；导出中忽略输入，复制失败由文档保留会话并提示。
   override func mouseDown(with event: NSEvent) {
     guard document?.isExporting != true else { return }
     window?.makeKey()
@@ -158,6 +160,12 @@ final class SelectionView: NSView {
       drag = .resizing(handle)
     } else if selection.contains(point) {
       if document.isSelectingRegion {
+        if event.clickCount == 2 {
+          start = nil
+          drag = nil
+          document.copy(closeAfter: true)
+          return
+        }
         drag = .moving
       } else if document.tool == .text {
         insertText(at: imagePoint(point))
