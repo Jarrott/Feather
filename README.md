@@ -30,6 +30,21 @@ open dist/Feather.app
 
 从旧版 ad-hoc 切换为开发证书时，系统可能要求重新授权一次；之后保持同一签名身份和安装位置。1.1.1 不再以 `CGPreflightScreenCaptureAccess()` 的 false 结果直接拦截截图，而由 ScreenCaptureKit 实际验证；只把 `SCStreamError.userDeclined` 作为授权拒绝，不将普通截图错误混报成权限问题。
 
+如果重新添加后仍反复提示，系统可能保留了旧 ad-hoc 签名的授权记录。可先检查针对本应用的日志：
+
+```bash
+/usr/bin/log show --last 10m --info --debug --predicate 'process == "tccd" AND eventMessage CONTAINS "Failed to match existing code requirement for subject com.feather.screenshot"'
+```
+
+若输出包含旧 `cdhash` 与当前证书要求不匹配，先退出轻截，再仅重置本应用的屏幕录制授权：
+
+```bash
+tccutil reset ScreenCapture com.feather.screenshot
+open dist/Feather.app
+```
+
+此操作会撤销 Feather 原来的截图授权，需要重新触发截图，在系统界面授权并按提示退出重开；不影响其他应用。由助手代执行时，应先取得用户对这项权限重置的明确同意。
+
 不要通过重置整个系统权限库或绕过 TCC 来处理此问题。[Apple 开发者技术支持说明了 ad-hoc 重建与权限丢失的关系](https://developer.apple.com/forums/thread/819406)。
 
 ## 使用

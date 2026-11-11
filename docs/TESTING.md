@@ -76,3 +76,11 @@ FEATHER_PREVIEW_DIR="$PWD/.build/previews" swift test --filter nativeViewsRender
 - 目录恢复保留 URL 的目录语义，偏好重建测试继续通过。
 - PNG 颜色断言使用原始通道，避免 NSColor ICC 舍入造成假失败。
 - 1.1.0：新热键先注册再替换，防止冲突丢失旧键；裁剪变化同步平移重做栈，防止恢复标注错位。
+
+## 旧授权签名不匹配排查（2026-11-11）
+
+- 实机确认运行中的 1.1.1 来自 dist/Feather.app，开发证书与构建一致。
+- tccd 日志明确出现 Failed to match existing code requirement，残留授权要求为旧 ad-hoc cdhash，当前应用要求为固定 Apple Development 证书。开关打开并不代表该旧记录能匹配当前副本。
+- 使用 orca-computer-use 按 PID 读取菜单栏应用的设置窗口，确认自定义热键已注册；按 bundle ID 的应用列表不含此 accessory 应用，需要使用实际进程 PID。
+- 用户明确同意后，正常退出应用并执行 tccutil reset ScreenCapture com.feather.screenshot，命令报告成功，再通过当前 app 的绝对路径重新打开。未修改 TCC 数据库、未重置其他应用权限。
+- 用户完成系统重新授权和重开后，确认 ⌃⌘A 已出现截图选区；本次实际权限故障恢复。未将本次恢复扩大为其他屏幕缩放、导出或系统版本的验收结果。
