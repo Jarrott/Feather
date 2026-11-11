@@ -14,6 +14,7 @@ final class SelectionView: NSView {
   private var pixelRect = CGRect.zero
   private var document: EditorDocument?
   private var toolbar: NSHostingView<CaptureToolbar>?
+  private var toolOptions: NSHostingView<CaptureToolOptions>?
   private var observation: AnyCancellable?
   private var start: CGPoint?
   private var originalRect = CGRect.zero
@@ -44,18 +45,30 @@ final class SelectionView: NSView {
       rootView: CaptureToolbar(document: document, onCancel: { [weak self] in self?.onCancel?() }))
     self.toolbar = toolbar
     addSubview(toolbar)
+    let options = NSHostingView(rootView: CaptureToolOptions(document: document))
+    toolOptions = options
+    addSubview(options)
     observation = document.objectWillChange.sink { [weak self] _ in
       Task { @MainActor in self?.refresh() }
     }
     refresh()
   }
 
+  /// 根据当前选区和导出状态重排两个浮层；属性尽量朝选区外侧展开，不改变原图或标注。
   private func refresh() {
     needsDisplay = true
     if let document {
-      toolbar?.frame = SelectionGeometry.toolbarFrame(
+      let frame = SelectionGeometry.toolbarFrame(
         selection: selection,
-        size: CGSize(width: 560, height: CaptureToolbar.height(for: document)), bounds: bounds)
+        size: CaptureToolbar.preferredSize, bounds: bounds)
+      toolbar?.frame = frame
+      if let size = CaptureToolOptions.preferredSize(for: document) {
+        toolOptions?.isHidden = false
+        toolOptions?.frame = SelectionGeometry.optionsFrame(
+          toolbar: frame, size: size, bounds: bounds, preferAbove: frame.maxY <= selection.minY)
+      } else {
+        toolOptions?.isHidden = true
+      }
     }
     window?.invalidateCursorRects(for: self)
   }
@@ -75,6 +88,10 @@ final class SelectionView: NSView {
         addCursorRect(CGRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12), cursor: cursor)
       }
     }
+    for control in [toolbar as NSView?, toolOptions as NSView?].compactMap({ $0 })
+    where !control.isHidden {
+      addCursorRect(control.frame, cursor: .arrow)
+    }
   }
 
   override func draw(_ dirtyRect: NSRect) {
@@ -83,7 +100,7 @@ final class SelectionView: NSView {
     let shade = NSBezierPath(rect: bounds)
     if !selection.isEmpty { shade.appendRect(selection) }
     shade.windingRule = .evenOdd
-    NSColor.black.withAlphaComponent(0.36).setFill()
+    NSColor.black.withAlphaComponent(0.27).setFill()
     shade.fill()
     if let document, let context = NSGraphicsContext.current?.cgContext {
       context.saveGState()
@@ -98,24 +115,26 @@ final class SelectionView: NSView {
       context.restoreGState()
     }
     if !selection.isEmpty {
-      let green = NSColor(srgbRed: 0.2, green: 0.94, blue: 0.62, alpha: 1)
+      let green = CaptureStyle.selectionColor
       green.setStroke()
       let border = NSBezierPath(rect: selection)
-      border.lineWidth = 1.5
+      border.lineWidth = 1
       border.stroke()
       green.setFill()
       for handle in SelectionHandle.allCases {
         let point = handle.point(in: selection)
-        NSBezierPath(rect: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)).fill()
+        let size: CGFloat =
+          [.topLeft, .topRight, .bottomLeft, .bottomRight].contains(handle) ? 6 : 5
+        NSBezierPath(
+          rect: CGRect(x: point.x - size / 2, y: point.y - size / 2, width: size, height: size)
+        ).fill()
       }
       if let pixels = cropRect(selection) {
-        drawLabel(
-          "\(Int(pixels.width)) × \(Int(pixels.height))",
-          at: CGPoint(x: selection.minX, y: max(6, selection.minY - 30)))
+        drawDimensions("\(Int(pixels.width)) × \(Int(pixels.height))")
       }
     }
-    if document == nil {
-      drawLabel(L.text("capture.instruction"), at: CGPoint(x: bounds.midX - 175, y: 42))
+    if document == nil, selection.isEmpty {
+      drawInstruction()
     }
   }
 
@@ -209,8 +228,7 @@ final class SelectionView: NSView {
       if key == "v" || key == "0" {
         document.isSelectingRegion = true
       } else if let index = Int(key), (1...7).contains(index) {
-        document.tool = AnnotationTool.allCases[index - 1]
-        document.isSelectingRegion = false
+        document.selectTool(AnnotationTool.allCases[index - 1])
       } else {
         super.keyDown(with: event)
       }
@@ -296,20 +314,40 @@ final class SelectionView: NSView {
     window?.makeFirstResponder(self)
   }
 
-  private func drawLabel(_ text: String, at point: CGPoint) {
+  /// 尺寸文字贴近选区左上边缘，使用阴影保持明暗背景可读；顶边无空间时放在选区内。
+  private func drawDimensions(_ text: String) {
+    let shadow = NSShadow()
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
+    shadow.shadowBlurRadius = 3
+    shadow.shadowOffset = CGSize(width: 0, height: -1)
     let attributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
+      .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+      .foregroundColor: NSColor.white, .shadow: shadow,
+    ]
+    let size = (text as NSString).size(withAttributes: attributes)
+    let x = max(6, min(selection.minX + 2, bounds.maxX - size.width - 6))
+    let y =
+      selection.minY >= size.height + 7 ? selection.minY - size.height - 5 : selection.minY + 8
+    (text as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: attributes)
+  }
+
+  /// 尚未框选时在底部显示简短操作说明，开始拖选后隐藏；尺寸按本地化文字计算并居中。
+  private func drawInstruction() {
+    let text = L.text("capture.instruction")
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.systemFont(ofSize: 12, weight: .regular),
       .foregroundColor: NSColor.white,
     ]
     let size = (text as NSString).size(withAttributes: attributes)
-    let origin = CGPoint(x: max(8, min(point.x, bounds.width - size.width - 24)), y: point.y)
-    NSColor(white: 0.08, alpha: 0.85).setFill()
+    let origin = CGPoint(
+      x: max(8, bounds.midX - (size.width + 24) / 2), y: bounds.maxY - size.height - 52)
+    NSColor(white: 0.10, alpha: 0.80).setFill()
     NSBezierPath(
       roundedRect: CGRect(
-        origin: origin, size: CGSize(width: size.width + 16, height: size.height + 10)), xRadius: 5,
-      yRadius: 5
+        origin: origin, size: CGSize(width: size.width + 24, height: size.height + 14)), xRadius: 7,
+      yRadius: 7
     ).fill()
     (text as NSString).draw(
-      at: CGPoint(x: origin.x + 8, y: origin.y + 5), withAttributes: attributes)
+      at: CGPoint(x: origin.x + 12, y: origin.y + 7), withAttributes: attributes)
   }
 }

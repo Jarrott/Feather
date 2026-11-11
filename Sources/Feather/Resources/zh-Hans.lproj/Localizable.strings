@@ -3,6 +3,10 @@
 "capture.failed" = "截图失败";
 "overlay.move" = "移动或调整选区 (V)";
 "overlay.cancel" = "取消截图 (Esc)";
+"overlay.deselect" = "再次点击可移动选区（V）";
+"overlay.redactionHint" = "不透明遮盖 · 覆盖原始像素";
+"overlay.fontSize" = "字号";
+"overlay.lineWidth" = "线宽";
 "overlay.adjustHint" = "拖动选区或边角调整范围，选择工具开始标注";
 "nav.workspace" = "工作空间";
 "nav.overview" = "截图工作台";

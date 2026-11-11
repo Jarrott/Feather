@@ -62,4 +62,27 @@ public enum SelectionGeometry {
     return CGRect(
       x: x, y: min(y, bounds.maxY - size.height - 12), width: width, height: size.height)
   }
+
+  /// 属性浮层优先放在工具条远离选区的一侧，空间不足时换侧并限制到屏内。
+  /// 全部几何参数使用局部逻辑点；preferAbove 指定优先上方，不改变工具条、选区或图像。
+  public static func optionsFrame(
+    toolbar: CGRect, size: CGSize, bounds: CGRect, preferAbove: Bool = false
+  ) -> CGRect {
+    let width = min(size.width, max(0, bounds.width - 24))
+    let height = min(size.height, max(0, bounds.height - 24))
+    let x = max(bounds.minX + 12, min(toolbar.minX, bounds.maxX - width - 12))
+    let below = toolbar.maxY
+    let above = toolbar.minY - height
+    let y: CGFloat
+    if preferAbove && above >= bounds.minY + 12 {
+      y = above
+    } else if below + height <= bounds.maxY - 12 {
+      y = below
+    } else {
+      y = above
+    }
+    return CGRect(
+      x: x, y: max(bounds.minY + 12, min(y, bounds.maxY - height - 12)),
+      width: width, height: height)
+  }
 }

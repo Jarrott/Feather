@@ -3,6 +3,10 @@
 "capture.failed" = "Capture failed";
 "overlay.move" = "Move or resize region (V)";
 "overlay.cancel" = "Cancel capture (Esc)";
+"overlay.deselect" = "Click again to move the region (V)";
+"overlay.redactionHint" = "Opaque cover · replaces original pixels";
+"overlay.fontSize" = "Text size";
+"overlay.lineWidth" = "Stroke width";
 "overlay.adjustHint" = "Drag the region or handles to adjust; choose a tool to annotate";
 "nav.workspace" = "WORKSPACE";
 "nav.overview" = "Overview";

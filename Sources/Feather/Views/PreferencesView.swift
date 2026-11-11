@@ -14,7 +14,7 @@ struct PreferencesView: View {
             Text(L.text("menu.tooltip")).font(.system(size: 11)).foregroundStyle(Theme.muted)
           }
           Spacer()
-          Text("v1.1.1").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.muted)
+          Text("v1.2.0").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.muted)
         }
         if let error = model.error {
           Label(error, systemImage: "exclamationmark.circle").font(.system(size: 11))

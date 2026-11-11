@@ -24,6 +24,15 @@ final class EditorDocument: NSObject, ObservableObject {
     self.appModel = appModel
   }
 
+  /// 选择标注工具；按钮再次点击当前工具可回到选区移动模式，数字键则保持绘图模式。
+  /// 仅改变交互状态，不修改标注或文件；导出期间忽略切换。
+  func selectTool(_ candidate: AnnotationTool, toggleSelection: Bool = false) {
+    guard !isExporting else { return }
+    let deselect = toggleSelection && !isSelectingRegion && tool == candidate
+    tool = candidate
+    isSelectingRegion = deselect
+  }
+
   /// 移动或调整选区后更新原始图片，并平移标注以保持其屏幕位置；保存期间拒绝修改。
   func updateCrop(_ image: CGImage, annotationOffset: CGPoint) {
     guard !isExporting else { return }

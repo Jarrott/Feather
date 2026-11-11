@@ -8,6 +8,7 @@
 | SelectionHandle.point | 逻辑选区 | 八个角点/边中点之一 | SelectionView、测试 |
 | SelectionGeometry.move / resize | 原选区、偏移、边界、可选手柄 | 限制边界、最小 4 点的逻辑选区 | SelectionView、测试 |
 | SelectionGeometry.toolbarFrame | 选区、工具条大小、屏幕边界 | 下方、上方或屏内的布局 CGRect | SelectionView、测试 |
+| SelectionGeometry.optionsFrame | 工具条 CGRect、浮层大小、屏幕边界、preferAbove（默认 false） | 优先指定一侧，空间不足时换侧并限制在屏内；不移动工具条 | SelectionView、测试 |
 | Annotation | 工具、像素点、颜色、线宽、文字 | 值类型；文字 ≤2000，线宽 1–80 | 标注覆盖层、测试 |
 | AnnotationHistory.append / undo / redo | Annotation / 无 | 新增 Bool，上限 200；维护撤销/重做顺序 | EditorDocument、工具条、SelectionView、测试 |
 | AnnotationHistory.translate | 原图像素偏移 CGPoint | 同步平移当前标注和重做栈，保留 ID | EditorDocument、测试 |
@@ -21,6 +22,7 @@
 | CaptureCoordinator.start / focus / cancel | 初始化参数 AppModel、可注入截图提供器 | onComplete() / onError(Error)；会话内持有文档 | AppDelegate |
 | SelectionView.beginEditing | EditorDocument、裁剪像素 CGRect | 在同一覆盖层添加工具条，观察状态变化 | CaptureCoordinator、测试 |
 | EditorDocument.updateCrop | 新 CGImage、标注像素偏移 | 更新图片和历史坐标；导出中拒绝修改 | SelectionView |
+| EditorDocument.selectTool | AnnotationTool、toggleSelection（默认 false） | 按钮可再次选中同一工具以返回移动模式；数字键只选择工具；导出中无操作 | CaptureToolbar、SelectionView、测试 |
 | EditorDocument.save / copy | asNewLocation、closeAfter / closeAfter | 成功按参数 onClose；失败保留会话，发布错误 | 工具条、SelectionView、测试 |
 
 ## 数据格式
@@ -40,3 +42,4 @@
 - 保存按钮和键盘调用方均明确传入 closeAfter: true，系统保存面板取消和导出失败不会调用 onClose。
 
 - 1.1.1：权限预检查仅用于设置状态提示，不阻断主动截图；实际拒绝将状态置为未授权，普通错误不改权限，已取消请求的延迟错误不弹提示。
+- 1.2.0：工具属性使用独立浮层，未修改截图提供器、权限处理、全局快捷键注册或偏好数据格式。

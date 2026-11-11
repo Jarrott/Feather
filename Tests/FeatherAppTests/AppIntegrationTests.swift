@@ -92,6 +92,29 @@ struct AppIntegrationTests {
     }
   }
 
+  @Test func toolToggleReturnsToSelectionWithoutChangingAnnotations() async throws {
+    try await withModel { model in
+      let document = EditorDocument(image: try fixture(), appModel: model)
+      document.add(
+        Annotation(
+          tool: .rectangle, points: [.zero, CGPoint(x: 40, y: 40)], color: InkColor.palette[0]))
+      let annotations = document.history.annotations
+      document.selectTool(.rectangle, toggleSelection: true)
+      #expect(document.tool == .rectangle && !document.isSelectingRegion)
+      document.selectTool(.rectangle, toggleSelection: true)
+      #expect(document.isSelectingRegion)
+      document.selectTool(.rectangle)
+      document.selectTool(.rectangle)
+      #expect(!document.isSelectingRegion)
+      document.selectTool(.text, toggleSelection: true)
+      #expect(document.tool == .text && !document.isSelectingRegion)
+      document.isExporting = true
+      document.selectTool(.pen, toggleSelection: true)
+      #expect(document.tool == .text && !document.isSelectingRegion)
+      #expect(document.history.annotations == annotations)
+    }
+  }
+
   @Test func nativeViewsRenderOffscreen() async throws {
     _ = NSApplication.shared
     try await withModel { model in
@@ -131,6 +154,33 @@ struct AppIntegrationTests {
       if let directory {
         try AnnotationRenderer.png(image: document.image, annotations: document.history.annotations)
           .write(to: directory.appendingPathComponent("annotated-export.png"))
+      }
+      // 覆盖底边、全屏和窄屏浮层布局；输入始终来自测试图，不读取用户屏幕。
+      for (name, size, rect, tool) in [
+        (
+          "bottom-edge", CGSize(width: 1024, height: 640),
+          CGRect(x: 400, y: 330, width: 220, height: 60), AnnotationTool.text
+        ),
+        (
+          "fullscreen", CGSize(width: 1024, height: 640),
+          CGRect(x: 0, y: 0, width: 640, height: 400), .redact
+        ),
+        (
+          "narrow", CGSize(width: 600, height: 500), CGRect(x: 60, y: 30, width: 420, height: 240),
+          .highlight
+        ),
+      ] {
+        let crop = try #require(source.cropping(to: rect))
+        let editor = EditorDocument(image: crop, appModel: model)
+        editor.selectTool(tool)
+        let view = SelectionView(image: source, frame: CGRect(origin: .zero, size: size))
+        view.beginEditing(editor, pixelRect: rect)
+        try await render(view, size: size, to: directory?.appendingPathComponent(name + ".png"))
+        if name == "bottom-edge" {
+          editor.error = L.text("copy.failed")
+          try await render(
+            view, size: size, to: directory?.appendingPathComponent("export-error.png"))
+        }
       }
     }
   }
