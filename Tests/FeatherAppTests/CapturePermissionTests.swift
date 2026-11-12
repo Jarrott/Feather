@@ -99,6 +99,19 @@ struct CapturePermissionTests {
     }
   }
 
+  @Test func screenChangesOnlyEndEditingWhenTheEditedDisplayChanges() {
+    let main = CaptureDisplay(id: 1, frame: CGRect(x: 0, y: 0, width: 1440, height: 900), scale: 2)
+    let other = CaptureDisplay(
+      id: 2, frame: CGRect(x: 1440, y: 0, width: 1920, height: 1080), scale: 1)
+    // 框选阶段尚无编辑屏幕，任何变化都取消。
+    #expect(CaptureCoordinator.shouldCancel(editing: nil, current: [main, other]))
+    #expect(!CaptureCoordinator.shouldCancel(editing: main, current: [main]))
+    #expect(!CaptureCoordinator.shouldCancel(editing: main, current: [other, main]))
+    #expect(CaptureCoordinator.shouldCancel(editing: other, current: [main]))
+    let rescaled = CaptureDisplay(id: 1, frame: main.frame, scale: 1)
+    #expect(CaptureCoordinator.shouldCancel(editing: main, current: [rescaled]))
+  }
+
   private func verifyFailure(_ failure: Error, expectedPermission: Bool) async throws {
     try await withModel { model in
       model.permissionGranted = true

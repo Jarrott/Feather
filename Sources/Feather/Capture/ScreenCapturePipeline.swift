@@ -7,6 +7,17 @@ struct CaptureDisplay: Equatable, Sendable {
   let scale: CGFloat
 }
 
+extension CaptureDisplay {
+  /// 读取屏幕的显示器编号、位置和缩放；无法识别编号时返回 nil。
+  @MainActor
+  init?(screen: NSScreen) {
+    guard
+      let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+    else { return nil }
+    self.init(id: number.uint32Value, frame: screen.frame, scale: screen.backingScaleFactor)
+  }
+}
+
 /// 已准备的一次性捕捉入口，顺序与显示器一致；闭包只持有系统过滤器，不保留截图。
 @MainActor
 struct CapturePlan {

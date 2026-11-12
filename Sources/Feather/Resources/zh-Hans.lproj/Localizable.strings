@@ -109,6 +109,9 @@
 "copy.failedAfterSave" = "截图已保存，但复制到剪贴板失败。";
 "save.success" = "截图已保存";
 "save.failed" = "保存失败：%@";
+"export.renderFailed" = "无法渲染截图。";
+"export.invalidPNG" = "图片不是有效的 PNG。";
+"export.invalidDirectory" = "所选保存位置不是文件夹。";
 "tool.rectangle" = "矩形";
 "tool.ellipse" = "椭圆";
 "tool.arrow" = "箭头";

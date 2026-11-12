@@ -109,6 +109,9 @@
 "copy.failedAfterSave" = "Capture saved, but copying to the clipboard failed.";
 "save.success" = "Capture saved";
 "save.failed" = "Save failed: %@";
+"export.renderFailed" = "The capture could not be rendered.";
+"export.invalidPNG" = "The image is not a valid PNG.";
+"export.invalidDirectory" = "The selected save location is not a folder.";
 "tool.rectangle" = "Rectangle";
 "tool.ellipse" = "Ellipse";
 "tool.arrow" = "Arrow";

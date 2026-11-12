@@ -34,7 +34,13 @@ fi
 ditto "$RESOURCE_BUNDLE" "$STAGED_APP/Contents/Resources/Feather_Feather.bundle"
 swift scripts/create-icon.swift "$PROJECT_ROOT/.build/AppIcon.iconset"
 iconutil -c icns "$PROJECT_ROOT/.build/AppIcon.iconset" -o "$STAGED_APP/Contents/Resources/AppIcon.icns"
-codesign --force --sign "$SIGNING_IDENTITY" --identifier com.feather.screenshot "$STAGED_APP"
+# 始终启用 hardened runtime（Apple 公证的必要条件，本应用无需额外 entitlement）。
+# 安全时间戳需联网访问 Apple 服务，分发构建可设置 CODE_SIGN_TIMESTAMP=1 启用。
+SIGN_FLAGS=(--force --options runtime --sign "$SIGNING_IDENTITY" --identifier com.feather.screenshot)
+if [ "${CODE_SIGN_TIMESTAMP:-0}" = '1' ] && [ "$SIGNING_IDENTITY" != '-' ]; then
+    SIGN_FLAGS+=(--timestamp)
+fi
+codesign "${SIGN_FLAGS[@]}" "$STAGED_APP"
 codesign --verify --strict "$STAGED_APP"
 # 完整签名通过后才替换产物，避免覆盖正在运行的可执行文件；只保留一份本地回滚副本。
 mkdir -p "$PROJECT_ROOT/dist"

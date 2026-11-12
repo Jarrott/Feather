@@ -327,8 +327,15 @@ final class SelectionView: NSView {
       super.keyDown(with: event)
       return
     }
-    if event.keyCode == 36 {
+    // 主键盘回车与小键盘 Enter 均复制并收起。
+    if event.keyCode == 36 || event.keyCode == 76 {
       document.copy(closeAfter: true)
+    } else if event.keyCode == 51 || event.keyCode == 117 {
+      // Delete / 向前删除只移除当前选中的标注，可撤销；未选中时不做任何事。
+      guard let id = selectedAnnotationID else { return }
+      selectedAnnotationID = nil
+      document.removeAnnotation(id: id)
+      refresh()
     } else if let key = event.charactersIgnoringModifiers?.lowercased() {
       if key == "v" || key == "0" {
         document.isSelectingRegion = true

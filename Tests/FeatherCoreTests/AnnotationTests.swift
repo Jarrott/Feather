@@ -24,6 +24,32 @@ struct AnnotationTests {
     #expect(!history.canRedo)
   }
 
+  @Test func removalRestoresOriginalLayerOrderOnUndo() {
+    var history = AnnotationHistory()
+    let first = annotation
+    let second = annotation
+    let third = annotation
+    for item in [first, second, third] { history.append(item) }
+    let removed = history.remove(id: second.id)
+    #expect(removed && history.annotations == [first, third])
+    let removedAgain = history.remove(id: second.id)
+    #expect(!removedAgain)
+    history.undo()
+    #expect(history.annotations == [first, second, third])
+    history.redo()
+    #expect(history.annotations == [first, third])
+  }
+
+  @Test func removalFollowsCropTranslation() {
+    var history = AnnotationHistory()
+    let item = annotation
+    history.append(item)
+    history.remove(id: item.id)
+    history.translate(by: CGPoint(x: 5, y: -10))
+    history.undo()
+    #expect(history.annotations.first?.points == [CGPoint(x: 15, y: 10), CGPoint(x: 105, y: 40)])
+  }
+
   @Test func newStrokeClearsRedoBranch() {
     var history = AnnotationHistory()
     history.append(annotation)

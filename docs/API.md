@@ -14,7 +14,8 @@
 | Annotation.translated | 像素偏移 CGPoint | 新 Annotation，保留身份、样式和文字 | SelectionView、AnnotationHistory、测试 |
 | AnnotationGeometry.bounds / contains / constrainedOffset | Annotation、像素点与容差 / 位移及图片边界 | 包围盒 / Bool / 约束后的偏移；无状态修改 | SelectionView、测试 |
 | AnnotationGeometry.textFont / arrowHead | Annotation | 与命中逻辑一致的 NSFont / CGPath | AnnotationRenderer、测试 |
-| AnnotationHistory.append / undo / redo | Annotation / 无 | 新增 Bool，最多 200 个标注、最近 200 步新增/移动；维护撤销/重做顺序 | EditorDocument、工具条、SelectionView、测试 |
+| AnnotationHistory.append / undo / redo | Annotation / 无 | 新增 Bool，最多 200 个标注、最近 200 步新增/移动/删除；维护撤销/重做顺序 | EditorDocument、工具条、SelectionView、测试 |
+| AnnotationHistory.remove | UUID | Bool；无效 ID 返回 false；删除作为一步历史，撤销恢复原图层位置 | EditorDocument、测试 |
 | AnnotationHistory.move | UUID、原图像素偏移 CGPoint | Bool；无效 ID、非有限或零偏移返回 false；移动作为一步历史，保留顺序 | EditorDocument、测试 |
 | AnnotationHistory.translate | 原图像素偏移 CGPoint | 同步平移当前标注及新增历史记录，移动相对偏移不变，保留 ID | EditorDocument、测试 |
 | AnnotationRenderer.draw / png | 标注、上下文 / CGImage 和标注 | 绘制 / PNG Data；无标注直接编码，有标注保留源 RGB 色域，失败抛 ExportError | SelectionView、EditorDocument、测试 |

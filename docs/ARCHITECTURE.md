@@ -47,7 +47,7 @@ FeatherApp / AppDelegate
 - 八个手柄固定对边，保留至少 4 逻辑点；移动保持大小，并限制到当前屏幕。
 - 选区调整从原始冻结图重裁剪；标注和重做栈偏移量为「旧裁剪像素原点 − 新原点」，保持屏幕锚点。
 - AnnotationGeometry 统一标注包围盒、轮廓命中、文字字体和箭头头部；按逆绘制顺序命中，Option 跳过命中。拖动保存原标注并只预览平移副本，抬起后由 EditorDocument 提交一次移动。
-- AnnotationHistory 保存新增与相对移动两类记录，最多 200 步；移动记录仅保存 ID 和位移，不重复存储整条画笔路径。裁剪变化迁移当前标注和新增记录，移动记录的相对偏移保持不变。
+- AnnotationHistory 保存新增、相对移动和删除三类记录，最多 200 步；删除记录保存原图层索引，撤销时按原顺序插回；移动记录仅保存 ID 和位移，不重复存储整条画笔路径。裁剪变化迁移当前标注、新增与删除记录，移动记录的相对偏移保持不变。
 - 标注与导出使用原图像素；预览直接绘制 CGImage 并禁用像素插值，工具条和选中标注的虚线辅助框独立于图片渲染，不进入 PNG。
 - SelectionView 持有主工具条与属性卡片两个 NSHostingView；主工具条尺寸固定，属性按当前工具/导出状态按需显示。SelectionGeometry 分别约束位置，属性优先向选区外侧展开。
 - CaptureStyle 提供统一选框颜色与工具条状态；小面积 HUD 使用窗口内 NSVisualEffectView 材质，不引入额外屏幕捕获、计时器或依赖。
@@ -62,7 +62,7 @@ FeatherApp / AppDelegate
 ## 构建与发行
 - Swift Package 构建执行文件，脚本将执行文件和本地化 bundle 装入标准 .app。
 - 默认按构建机器架构生成；源码支持 arm64 和 x86_64，需分别实机验证。
-- 签名从 CODE_SIGN_IDENTITY 或本机 .signing-identity 读取，默认要求固定身份；正式发行需要 Developer ID Application 和公证。
+- 签名从 CODE_SIGN_IDENTITY 或本机 .signing-identity 读取，默认要求固定身份；签名始终启用 hardened runtime，设置 CODE_SIGN_TIMESTAMP=1 时附加 Apple 安全时间戳；正式发行需要 Developer ID Application 和公证。
 - 构建在暂存 app 内完成并验证签名，成功后替换 dist 产物，仅保留一个 .build/Feather-previous.app 回滚副本；不会原地覆写运行中的可执行文件。
 - ad-hoc 仅允许显式选择并输出警告；不通过自定义宽松 designated requirement 掩盖签名变化。
 - 保持 bundle ID com.feather.screenshot；稳定安装路径和签名身份可降低重新授权概率。

@@ -59,6 +59,13 @@ final class EditorDocument: NSObject, ObservableObject {
     status = nil
   }
 
+  /// 删除一个标注并记为一步可撤销编辑；导出时忽略，实际删除后清除过期输出状态。
+  func removeAnnotation(id: UUID) {
+    guard !isExporting, history.remove(id: id) else { return }
+    savedURL = nil
+    status = nil
+  }
+
   /// 像素渲染后写入会话指定的 PNG 剪贴板；失败保留会话，成功可按调用参数关闭窗口。
   func copy(closeAfter: Bool = false) {
     guard !isExporting else { return }
@@ -71,7 +78,7 @@ final class EditorDocument: NSObject, ObservableObject {
       }
       status = L.text("copy.success")
       if closeAfter { onClose?() }
-    } catch { self.error = error.localizedDescription }
+    } catch { self.error = Self.message(for: error) }
   }
 
   /// 快速保存或显示另存为面板；磁盘写入在后台完成，禁止并行导出和同时修改标注。
@@ -96,13 +103,15 @@ final class EditorDocument: NSObject, ObservableObject {
     Task {
       defer { isExporting = false }
       do {
-        let data = try AnnotationRenderer.png(image: image, annotations: annotations)
-        let url = try await Task.detached(priority: .userInitiated) {
+        // 主线程只合成标注；大图的 PNG 编码与写盘在后台完成，保存期间界面保持响应。
+        let composed = try AnnotationRenderer.composite(image: image, annotations: annotations)
+        let (data, url) = try await Task.detached(priority: .userInitiated) {
+          let data = try AnnotationRenderer.encodePNG(composed)
           if let destination {
             try data.write(to: destination, options: .atomic)
-            return destination
+            return (data, destination)
           }
-          return try PNGExporter.save(data, to: directory)
+          return (data, try PNGExporter.save(data, to: directory))
         }.value
         savedURL = url
         status = L.text("save.success")
@@ -116,7 +125,17 @@ final class EditorDocument: NSObject, ObservableObject {
           isExporting = false
           onClose?()
         }
-      } catch { self.error = L.format("save.failed", error.localizedDescription) }
+      } catch { self.error = L.format("save.failed", Self.message(for: error)) }
+    }
+  }
+
+  /// 将核心导出错误映射为当前语言文案；其他系统错误沿用系统本地化描述。
+  static func message(for error: Error) -> String {
+    switch error as? ExportError {
+    case .renderFailed: L.text("export.renderFailed")
+    case .invalidPNG: L.text("export.invalidPNG")
+    case .invalidDirectory: L.text("export.invalidDirectory")
+    case nil: error.localizedDescription
     }
   }
 

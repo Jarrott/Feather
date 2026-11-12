@@ -61,6 +61,15 @@ struct AppIntegrationTests {
     }
   }
 
+  @Test func exportErrorsUseLocalizedMessages() {
+    for error in [ExportError.renderFailed, .invalidPNG, .invalidDirectory] {
+      let message = EditorDocument.message(for: error)
+      #expect(!message.isEmpty && !message.hasPrefix("export."))
+    }
+    let system = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))
+    #expect(EditorDocument.message(for: system) == system.localizedDescription)
+  }
+
   @Test func failedSavePreservesAnnotationsAndCanRetry() async throws {
     try await withModel { model in
       let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

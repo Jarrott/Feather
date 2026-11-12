@@ -224,6 +224,46 @@ struct OverlayInteractionTests {
     }
   }
 
+  @Test func deleteKeyRemovesSelectedAnnotationAndUndoRestoresIt() async throws {
+    try await withSelection { view, document, window, _ in
+      document.selectTool(.rectangle)
+      try drag(view, window: window, from: CGPoint(x: 140, y: 140), to: CGPoint(x: 240, y: 220))
+      try drag(view, window: window, from: CGPoint(x: 260, y: 150), to: CGPoint(x: 330, y: 230))
+      let annotations = document.history.annotations
+      #expect(annotations.count == 2)
+      // 未选中时按 Delete 不改变标注；点中第一个矩形边线后删除它。
+      try click(view, window: window, at: CGPoint(x: 360, y: 280), count: 1)
+      view.keyDown(with: try key(51, window: window))
+      #expect(document.history.annotations == annotations)
+      try click(view, window: window, at: CGPoint(x: 140, y: 180), count: 1)
+      view.keyDown(with: try key(51, window: window))
+      #expect(document.history.annotations == [annotations[1]])
+      view.keyDown(with: try key(51, window: window))
+      #expect(document.history.annotations == [annotations[1]])
+      document.history.undo()
+      #expect(document.history.annotations == annotations)
+    }
+  }
+
+  @Test func keypadEnterCopiesAndCloses() async throws {
+    try await withSelection { view, document, window, pasteboard in
+      var closeCount = 0
+      document.onClose = { closeCount += 1 }
+      view.keyDown(with: try key(76, window: window, characters: "\u{3}"))
+      #expect(closeCount == 1 && pasteboard.data(forType: .png) != nil)
+    }
+  }
+
+  private func key(_ code: UInt16, window: NSWindow, characters: String = "\u{7F}") throws
+    -> NSEvent
+  {
+    try #require(
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, characters: characters,
+        charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+  }
+
   /// 构造未显示的选区与独立剪贴板，结束后释放资源；不访问桌面、系统剪贴板或真实用户偏好。
   private func withSelection(
     scale: CGFloat = 1, requestText: @escaping @MainActor () -> String? = { nil },

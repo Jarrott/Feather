@@ -13,6 +13,7 @@ final class CaptureCoordinator {
   private let model: AppModel
   private let captureScreens: (Bool) async throws -> [ScreenSnapshot]
   private var document: EditorDocument?
+  private var editingDisplay: CaptureDisplay?
   private var finished = false
 
   /// 注入静态帧提供器便于隔离测试；默认由系统执行权限检查，预检查为 false 也会尝试捕捉。
@@ -35,7 +36,7 @@ final class CaptureCoordinator {
     guard task == nil, !finished else { return }
     screenObserver = NotificationCenter.default.addObserver(
       forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-    ) { [weak self] _ in Task { @MainActor in self?.cancel() } }
+    ) { [weak self] _ in Task { @MainActor in self?.screensChanged() } }
     task = Task { [weak self] in
       guard let self else { return }
       do {
@@ -67,6 +68,19 @@ final class CaptureCoordinator {
     finish()
   }
 
+  /// 框选阶段任何显示器变化都取消；编辑阶段只在所用屏幕断开、移动或缩放变化时取消，
+  /// 避免连接其他显示器、Dock 或菜单栏变化时丢失尚未导出的标注。
+  private func screensChanged() {
+    let current = NSScreen.screens.compactMap(CaptureDisplay.init(screen:))
+    if Self.shouldCancel(editing: editingDisplay, current: current) { cancel() }
+  }
+
+  /// 编辑中的屏幕仍以相同位置和缩放存在时保留会话；尚未进入编辑时总是取消。
+  static func shouldCancel(editing: CaptureDisplay?, current: [CaptureDisplay]) -> Bool {
+    guard let editing else { return true }
+    return !current.contains(editing)
+  }
+
   private func present(screen: NSScreen, image: CGImage) {
     let window = CaptureWindow(
       contentRect: screen.frame, styleMask: .borderless,
@@ -88,6 +102,7 @@ final class CaptureCoordinator {
       else { return }
       let document = EditorDocument(image: cropped, appModel: self.model)
       self.document = document
+      self.editingDisplay = CaptureDisplay(screen: screen)
       document.onClose = { [weak self] in self?.finish() }
       for other in self.windows where other !== window { other.close() }
       self.windows = [window]
@@ -110,6 +125,7 @@ final class CaptureCoordinator {
     for window in windows { window.close() }
     windows.removeAll()
     document = nil
+    editingDisplay = nil
     onComplete?()
   }
 }

@@ -59,17 +59,21 @@ public struct Annotation: Identifiable, Equatable, Sendable {
 }
 
 /// 有界编辑历史；最多 200 个标注和最近 200 步操作，移动只记录偏移，不复制整条画笔路径。
+/// 删除记录原位置，撤销后按原图层顺序恢复。
 public struct AnnotationHistory: Sendable {
   public private(set) var annotations: [Annotation] = []
   private enum Edit: Sendable {
     case addition(Annotation)
     case movement(UUID, CGPoint)
+    case removal(Annotation, index: Int)
 
     func translated(by offset: CGPoint) -> Edit {
-      if case .addition(let annotation) = self {
-        return .addition(annotation.translated(by: offset))
+      switch self {
+      case .addition(let annotation): .addition(annotation.translated(by: offset))
+      case .removal(let annotation, let index):
+        .removal(annotation.translated(by: offset), index: index)
+      case .movement: self
       }
-      return self
     }
   }
   private var applied: [Edit] = []
@@ -100,12 +104,23 @@ public struct AnnotationHistory: Sendable {
     return true
   }
 
-  /// 撤回最近一次新增或移动；空栈时无副作用。
+  /// 删除指定标注并记为一步编辑；撤销时恢复到原图层位置，无效 ID 返回 false。
+  @discardableResult
+  public mutating func remove(id: UUID) -> Bool {
+    guard let index = annotations.firstIndex(where: { $0.id == id }) else { return false }
+    let annotation = annotations.remove(at: index)
+    record(.removal(annotation, index: index))
+    return true
+  }
+
+  /// 撤回最近一次新增、移动或删除；空栈时无副作用。
   public mutating func undo() {
     guard let edit = applied.popLast() else { return }
     switch edit {
     case .addition(let annotation): annotations.removeAll { $0.id == annotation.id }
     case .movement(let id, let offset): applyMove(id: id, by: CGPoint(x: -offset.x, y: -offset.y))
+    case .removal(let annotation, let index):
+      annotations.insert(annotation, at: min(index, annotations.count))
     }
     undone.append(edit)
   }
@@ -116,6 +131,7 @@ public struct AnnotationHistory: Sendable {
     switch edit {
     case .addition(let annotation): annotations.append(annotation)
     case .movement(let id, let offset): applyMove(id: id, by: offset)
+    case .removal(let annotation, _): annotations.removeAll { $0.id == annotation.id }
     }
     applied.append(edit)
   }

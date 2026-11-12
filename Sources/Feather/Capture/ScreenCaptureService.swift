@@ -18,14 +18,7 @@ enum ScreenCaptureService {
   /// showCursor 决定是否包含指针；系统负责权限提示，任一捕捉失败原样抛出。
   static func capture(showCursor: Bool) async throws -> [ScreenSnapshot] {
     let screens = NSScreen.screens
-    let displays = screens.compactMap { screen -> CaptureDisplay? in
-      guard
-        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
-          as? NSNumber
-      else { return nil }
-      return CaptureDisplay(
-        id: number.uint32Value, frame: screen.frame, scale: screen.backingScaleFactor)
-    }
+    let displays = screens.compactMap(CaptureDisplay.init(screen:))
     guard displays.count == screens.count else { throw CaptureError.noDisplay }
     let images = try await pipeline.capture(displays: displays, showCursor: showCursor)
     return zip(screens, images).map { ScreenSnapshot(screen: $0, image: $1) }
