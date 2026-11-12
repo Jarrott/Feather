@@ -130,3 +130,4 @@
 "color.4" = "紫罗兰";
 "color.5" = "白色";
 "permission.reveal" = "在 Finder 中显示当前应用";
+"overlay.doubleClick" = "双击选区内部完成截图，标注时也可直接双击。";

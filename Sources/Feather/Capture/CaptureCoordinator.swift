@@ -30,16 +30,17 @@ final class CaptureCoordinator {
 
   var isExporting: Bool { document?.isExporting == true }
 
-  /// 异步读取可分享显示器，排除自身窗口；权限或系统错误会关闭覆盖层并通知调用方。
+  /// 无固定等待地发起静态捕捉，排除自身窗口；重复启动无操作，权限或系统错误通知调用方。
   func start() {
+    guard task == nil, !finished else { return }
     screenObserver = NotificationCenter.default.addObserver(
       forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
     ) { [weak self] _ in Task { @MainActor in self?.cancel() } }
     task = Task { [weak self] in
       guard let self else { return }
       do {
-        // 等待设置窗口隐藏后的系统合成帧，避免把设置内容截入图片。
-        try await Task.sleep(for: .milliseconds(180))
+        // 过滤器排除自身应用窗口，直接开始捕捉，不增加固定启动延迟。
+        try Task.checkCancellation()
         let snapshots = try await captureScreens(showCursor)
         try Task.checkCancellation()
         guard !snapshots.isEmpty else { throw CaptureError.noDisplay }

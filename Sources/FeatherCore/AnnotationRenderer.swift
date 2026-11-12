@@ -28,18 +28,7 @@ public enum AnnotationRenderer {
       context.move(to: start)
       context.addLine(to: end)
       context.strokePath()
-      let angle = atan2(end.y - start.y, end.x - start.x)
-      let length = max(14, annotation.lineWidth * 4)
-      context.move(to: end)
-      context.addLine(
-        to: CGPoint(
-          x: end.x - length * cos(angle - .pi / 6),
-          y: end.y - length * sin(angle - .pi / 6)))
-      context.addLine(
-        to: CGPoint(
-          x: end.x - length * cos(angle + .pi / 6),
-          y: end.y - length * sin(angle + .pi / 6)))
-      context.closePath()
+      context.addPath(AnnotationGeometry.arrowHead(of: annotation))
       context.fillPath()
     case .pen:
       if annotation.points.count == 1 {
@@ -63,7 +52,7 @@ public enum AnnotationRenderer {
       NSGraphicsContext.saveGraphicsState()
       NSGraphicsContext.current = graphics
       let attributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: max(18, annotation.lineWidth * 5), weight: .semibold),
+        .font: AnnotationGeometry.textFont(for: annotation),
         .foregroundColor: color,
       ]
       (annotation.text as NSString).draw(at: start, withAttributes: attributes)
@@ -71,26 +60,37 @@ public enum AnnotationRenderer {
     }
   }
 
-  /// 将标注合并到原始分辨率的图片；内存分配或编码失败时抛出英文错误，不写磁盘。
+  /// 以原始像素和颜色空间导出 PNG；无标注时直接编码原图，避免额外全图拷贝与颜色转换。
+  /// 有标注时只合成一次，RGB 图片保留原色域；内存分配或编码失败抛出英文错误，不写磁盘。
   public static func png(image: CGImage, annotations: [Annotation]) throws -> Data {
+    if annotations.isEmpty { return try encodePNG(image) }
+    let colorSpace =
+      image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+      ?? CGColorSpace(name: CGColorSpace.sRGB)!
     guard
       let context = CGContext(
         data: nil, width: image.width, height: image.height,
         bitsPerComponent: 8, bytesPerRow: 0,
-        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        space: colorSpace,
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     else { throw ExportError.renderFailed }
+    context.interpolationQuality = .none
     context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
     context.translateBy(x: 0, y: CGFloat(image.height))
     context.scaleBy(x: 1, y: -1)
     for annotation in annotations { draw(annotation, in: context) }
     guard let output = context.makeImage() else { throw ExportError.renderFailed }
+    return try encodePNG(output)
+  }
+
+  /// 将像素图及其颜色配置交给 ImageIO 无损编码；不重采样、不强制转成 sRGB。
+  private static func encodePNG(_ image: CGImage) throws -> Data {
     let data = NSMutableData()
     guard
       let destination = CGImageDestinationCreateWithData(
         data, UTType.png.identifier as CFString, 1, nil)
     else { throw ExportError.renderFailed }
-    CGImageDestinationAddImage(destination, output, nil)
+    CGImageDestinationAddImage(destination, image, nil)
     guard CGImageDestinationFinalize(destination) else { throw ExportError.renderFailed }
     return data as Data
   }

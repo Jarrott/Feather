@@ -4,6 +4,30 @@ import Testing
 @testable import FeatherCore
 
 struct GeometryTests {
+  @Test func captureUsesSystemPixelScaleAndRoundsUp() {
+    #expect(
+      CaptureGeometry.capturePixelSize(
+        contentSize: CGSize(width: 1920, height: 1080), pointPixelScale: 2,
+        fallbackSize: CGSize(width: 1280, height: 720), backingScale: 1)
+        == CGSize(width: 3840, height: 2160))
+    #expect(
+      CaptureGeometry.capturePixelSize(
+        contentSize: CGSize(width: 100.25, height: 50.25), pointPixelScale: 2,
+        fallbackSize: .zero, backingScale: 1) == CGSize(width: 201, height: 101))
+  }
+
+  @Test func invalidSystemGeometryFallsBackWithoutInventingPixels() {
+    #expect(
+      CaptureGeometry.capturePixelSize(
+        contentSize: .zero, pointPixelScale: 0,
+        fallbackSize: CGSize(width: 1728, height: 1117), backingScale: 2)
+        == CGSize(width: 3456, height: 2234))
+    #expect(
+      CaptureGeometry.capturePixelSize(
+        contentSize: CGSize(width: CGFloat.infinity, height: 10), pointPixelScale: 2,
+        fallbackSize: .zero, backingScale: 1) == nil)
+  }
+
   @Test func reverseDragIsNormalizedAndClipped() {
     let result = CaptureGeometry.selection(
       from: CGPoint(x: 120, y: 80), to: CGPoint(x: -20, y: 10),

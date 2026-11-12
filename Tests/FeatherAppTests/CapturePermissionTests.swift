@@ -48,6 +48,24 @@ struct CapturePermissionTests {
     #expect(!ScreenCaptureService.isPermissionDenied(CancellationError()))
   }
 
+  @Test func repeatedStartOnlyRequestsCaptureOnce() async throws {
+    try await withModel { model in
+      var attempts = 0
+      var completions = 0
+      let capture = CaptureCoordinator(model: model) { _ in
+        attempts += 1
+        return []
+      }
+      capture.onComplete = { completions += 1 }
+      capture.start()
+      capture.start()
+      for _ in 0..<100 where completions == 0 { try await Task.sleep(for: .milliseconds(10)) }
+      capture.start()
+      await Task.yield()
+      #expect(attempts == 1 && completions == 1)
+    }
+  }
+
   @Test func actualDenialClearsPreviouslyGrantedState() async throws {
     try await verifyFailure(denied(), expectedPermission: false)
   }

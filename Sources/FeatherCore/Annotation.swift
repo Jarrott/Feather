@@ -43,6 +43,13 @@ public struct Annotation: Identifiable, Equatable, Sendable {
     self.text = String(text.prefix(2000))
   }
 
+  /// 返回保持身份与样式的平移副本；偏移使用原图像素，不改变原始标注。
+  public func translated(by offset: CGPoint) -> Annotation {
+    var result = self
+    result.points = points.map { CGPoint(x: $0.x + offset.x, y: $0.y + offset.y) }
+    return result
+  }
+
   public var rect: CGRect {
     guard let start = points.first, let end = points.last else { return .zero }
     return CGRect(
@@ -51,11 +58,23 @@ public struct Annotation: Identifiable, Equatable, Sendable {
   }
 }
 
-/// 值类型撤销栈；新增标注清除重做分支，最多保留 200 个标注以限制内存。
+/// 有界编辑历史；最多 200 个标注和最近 200 步操作，移动只记录偏移，不复制整条画笔路径。
 public struct AnnotationHistory: Sendable {
   public private(set) var annotations: [Annotation] = []
-  private var undone: [Annotation] = []
-  public var canUndo: Bool { !annotations.isEmpty }
+  private enum Edit: Sendable {
+    case addition(Annotation)
+    case movement(UUID, CGPoint)
+
+    func translated(by offset: CGPoint) -> Edit {
+      if case .addition(let annotation) = self {
+        return .addition(annotation.translated(by: offset))
+      }
+      return self
+    }
+  }
+  private var applied: [Edit] = []
+  private var undone: [Edit] = []
+  public var canUndo: Bool { !applied.isEmpty }
   public var canRedo: Bool { !undone.isEmpty }
   public var isFull: Bool { annotations.count >= 200 }
 
@@ -66,28 +85,56 @@ public struct AnnotationHistory: Sendable {
   public mutating func append(_ annotation: Annotation) -> Bool {
     guard !isFull, !annotation.points.isEmpty else { return false }
     annotations.append(annotation)
-    undone.removeAll()
+    record(.addition(annotation))
     return true
   }
 
-  /// 将最新标注移至重做栈；空栈时无副作用。
+  /// 平移指定标注并记为一步编辑；身份、顺序和样式不变，无效 ID、非有限或零偏移返回 false。
+  @discardableResult
+  public mutating func move(id: UUID, by offset: CGPoint) -> Bool {
+    guard offset.x.isFinite, offset.y.isFinite, offset != .zero,
+      let index = annotations.firstIndex(where: { $0.id == id })
+    else { return false }
+    annotations[index] = annotations[index].translated(by: offset)
+    record(.movement(id, offset))
+    return true
+  }
+
+  /// 撤回最近一次新增或移动；空栈时无副作用。
   public mutating func undo() {
-    if let last = annotations.popLast() { undone.append(last) }
-  }
-
-  /// 恢复上次撤销的标注；空栈时无副作用。
-  public mutating func redo() {
-    if let last = undone.popLast() { annotations.append(last) }
-  }
-
-  /// 调整裁剪原点时平移已提交和已撤销的标注，使标注继续锚定原屏幕内容，不改变顺序。
-  public mutating func translate(by offset: CGPoint) {
-    func shifted(_ annotation: Annotation) -> Annotation {
-      var result = annotation
-      result.points = result.points.map { CGPoint(x: $0.x + offset.x, y: $0.y + offset.y) }
-      return result
+    guard let edit = applied.popLast() else { return }
+    switch edit {
+    case .addition(let annotation): annotations.removeAll { $0.id == annotation.id }
+    case .movement(let id, let offset): applyMove(id: id, by: CGPoint(x: -offset.x, y: -offset.y))
     }
-    annotations = annotations.map(shifted)
-    undone = undone.map(shifted)
+    undone.append(edit)
+  }
+
+  /// 恢复最近一次撤回的编辑，保留标注顺序；空栈时无副作用。
+  public mutating func redo() {
+    guard let edit = undone.popLast() else { return }
+    switch edit {
+    case .addition(let annotation): annotations.append(annotation)
+    case .movement(let id, let offset): applyMove(id: id, by: offset)
+    }
+    applied.append(edit)
+  }
+
+  /// 改变裁剪原点时迁移当前标注与新增记录；移动记录是相对偏移，保持不变。
+  public mutating func translate(by offset: CGPoint) {
+    annotations = annotations.map { $0.translated(by: offset) }
+    applied = applied.map { $0.translated(by: offset) }
+    undone = undone.map { $0.translated(by: offset) }
+  }
+
+  private mutating func record(_ edit: Edit) {
+    applied.append(edit)
+    if applied.count > 200 { applied.removeFirst(applied.count - 200) }
+    undone.removeAll()
+  }
+
+  private mutating func applyMove(id: UUID, by offset: CGPoint) {
+    guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+    annotations[index] = annotations[index].translated(by: offset)
   }
 }

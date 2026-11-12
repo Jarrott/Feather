@@ -48,7 +48,8 @@ struct CaptureToolbar: View {
         onCancel()
       }
       CaptureToolButton(
-        icon: "checkmark", title: L.text("editor.done") + " (↩)", tint: CaptureStyle.accent
+        icon: "checkmark", title: L.text("editor.done") + " (↩)",
+        hint: L.text("overlay.doubleClick"), tint: CaptureStyle.accent
       ) {
         document.copy(closeAfter: true)
       }

@@ -9,7 +9,6 @@ final class SelectionView: NSView {
   var onSelect: ((CGRect) -> Void)?
   var onCancel: (() -> Void)?
   private let source: CGImage
-  private let screenshot: NSImage
   private var selection = CGRect.zero
   private var pixelRect = CGRect.zero
   private var document: EditorDocument?
@@ -19,18 +18,27 @@ final class SelectionView: NSView {
   private var start: CGPoint?
   private var originalRect = CGRect.zero
   private var pending: Annotation?
+  private var selectedAnnotationID: UUID?
+  private var clickMark: (id: UUID, history: AnnotationHistory)?
+  private var textClickTask: Task<Void, Never>?
+  private let requestText: @MainActor () -> String?
   private var drag: Drag?
   private enum Drag {
     case selecting, moving
     case resizing(SelectionHandle)
-    case drawing
+    case drawing, text
+    case movingAnnotation(Annotation)
   }
   override var isFlipped: Bool { true }
   override var acceptsFirstResponder: Bool { true }
 
-  init(image: CGImage, frame: CGRect) {
+  /// 创建冻结画面；文字输入默认使用原生面板，测试可注入输入器，不改变系统截图权限。
+  init(
+    image: CGImage, frame: CGRect,
+    requestText: @escaping @MainActor () -> String? = SelectionView.promptForText
+  ) {
     source = image
-    screenshot = NSImage(cgImage: image, size: frame.size)
+    self.requestText = requestText
     super.init(frame: frame)
   }
 
@@ -49,7 +57,10 @@ final class SelectionView: NSView {
     toolOptions = options
     addSubview(options)
     observation = document.objectWillChange.sink { [weak self] _ in
-      Task { @MainActor in self?.refresh() }
+      Task { @MainActor in
+        self?.cancelTextClick()
+        self?.refresh()
+      }
     }
     refresh()
   }
@@ -58,6 +69,9 @@ final class SelectionView: NSView {
   private func refresh() {
     needsDisplay = true
     if let document {
+      if !document.history.annotations.contains(where: { $0.id == selectedAnnotationID }) {
+        selectedAnnotationID = nil
+      }
       let frame = SelectionGeometry.toolbarFrame(
         selection: selection,
         size: CaptureToolbar.preferredSize, bounds: bounds)
@@ -94,9 +108,17 @@ final class SelectionView: NSView {
     }
   }
 
+  /// 在冻结画面上绘制编辑预览；移动替换原层中的标注，辅助框仅在此显示，不进入 PNG。
   override func draw(_ dirtyRect: NSRect) {
-    screenshot.draw(
-      in: bounds, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
+    // 直接绘制原始 CGImage，避免 NSImage 的中间表示和插值使细字、单像素线变软。
+    if let context = NSGraphicsContext.current?.cgContext {
+      context.saveGState()
+      context.interpolationQuality = .none
+      context.translateBy(x: 0, y: bounds.height)
+      context.scaleBy(x: 1, y: -1)
+      context.draw(source, in: bounds)
+      context.restoreGState()
+    }
     let shade = NSBezierPath(rect: bounds)
     if !selection.isEmpty { shade.appendRect(selection) }
     shade.windingRule = .evenOdd
@@ -109,9 +131,26 @@ final class SelectionView: NSView {
       context.scaleBy(
         x: bounds.width / CGFloat(source.width), y: bounds.height / CGFloat(source.height))
       for annotation in document.history.annotations {
-        AnnotationRenderer.draw(annotation, in: context)
+        if let pending, pending.id == annotation.id {
+          AnnotationRenderer.draw(pending, in: context)
+        } else {
+          AnnotationRenderer.draw(annotation, in: context)
+        }
       }
-      if let pending { AnnotationRenderer.draw(pending, in: context) }
+      if let pending, !document.history.annotations.contains(where: { $0.id == pending.id }) {
+        AnnotationRenderer.draw(pending, in: context)
+      }
+      if let selected = pending
+        ?? document.history.annotations.first(where: { $0.id == selectedAnnotationID })
+      {
+        let scale = CGFloat(source.width) / bounds.width
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.85).cgColor)
+        context.setShadow(offset: .zero, blur: 2 * scale, color: NSColor.black.cgColor)
+        context.setLineWidth(scale)
+        context.setLineDash(phase: 0, lengths: [3 * scale, 3 * scale])
+        context.stroke(
+          AnnotationGeometry.bounds(of: selected).insetBy(dx: -4 * scale, dy: -4 * scale))
+      }
       context.restoreGState()
     }
     if !selection.isEmpty {
@@ -138,47 +177,73 @@ final class SelectionView: NSView {
     }
   }
 
-  /// 按下时分流框选、缩放、移动与绘图；移动模式下双击选区内部复用确认按钮的复制并关闭流程。
-  /// 边角手柄优先缩放，绘图模式不解释双击；导出中忽略输入，复制失败由文档保留会话并提示。
+  /// 双击选区确认优先于标注操作，所有工具一致；单击命中标注可移动，绿框手柄继续缩放。
+  /// 导出中忽略输入；确认前撤回双击首击生成的小标记，文字单击延后至双击间隔结束。
   override func mouseDown(with event: NSEvent) {
     guard document?.isExporting != true else { return }
+    cancelTextClick()
     window?.makeKey()
     window?.makeFirstResponder(self)
     let point = convert(event.locationInWindow, from: nil)
     start = point
     originalRect = selection
+    pending = nil
+    drag = nil
     guard let document else {
       selection = .zero
       drag = .selecting
       needsDisplay = true
       return
     }
-    if let handle = SelectionHandle.allCases.first(where: {
-      let position = $0.point(in: selection)
+    let handle = SelectionHandle.allCases.first { handle in
+      let position = handle.point(in: selection)
       return hypot(position.x - point.x, position.y - point.y) <= 8
-    }) {
+    }
+    if handle == nil, selection.contains(point), event.clickCount == 2 {
+      if let clickMark, document.history.annotations.last?.id == clickMark.id {
+        document.history = clickMark.history
+      }
+      clickMark = nil
+      start = nil
+      document.copy(closeAfter: true)
+      refresh()
+      return
+    }
+    clickMark = nil
+    if let handle {
       drag = .resizing(handle)
     } else if selection.contains(point) {
-      if document.isSelectingRegion {
-        if event.clickCount == 2 {
-          start = nil
-          drag = nil
-          document.copy(closeAfter: true)
-          return
-        }
-        drag = .moving
-      } else if document.tool == .text {
-        insertText(at: imagePoint(point))
+      let pixel = imagePoint(point)
+      let tolerance =
+        6 * max(CGFloat(source.width) / bounds.width, CGFloat(source.height) / bounds.height)
+      // 按绘制顺序从上向下命中；Option 可在已有标注上继续画新标注。
+      if !event.modifierFlags.contains(.option),
+        let annotation = document.history.annotations.last(where: {
+          AnnotationGeometry.contains(pixel, in: $0, tolerance: tolerance)
+        })
+      {
+        selectedAnnotationID = annotation.id
+        drag = .movingAnnotation(annotation)
       } else {
-        drag = .drawing
-        pending = Annotation(
-          tool: document.tool, points: [imagePoint(point)], color: document.color,
-          lineWidth: document.lineWidth)
+        selectedAnnotationID = nil
+        if document.isSelectingRegion {
+          drag = .moving
+        } else if document.tool == .text {
+          drag = .text
+        } else {
+          drag = .drawing
+          pending = Annotation(
+            tool: document.tool, points: [pixel], color: document.color,
+            lineWidth: document.lineWidth)
+        }
       }
+    } else {
+      selectedAnnotationID = nil
     }
     needsDisplay = true
   }
 
+  /// 将鼠标位移转换为原图像素并预览；标注移动限于图片边界，抬起前不写入撤销历史。
   override func mouseDragged(with event: NSEvent) {
     guard let start, let drag, document?.isExporting != true else { return }
     let point = convert(event.locationInWindow, from: nil)
@@ -189,6 +254,14 @@ final class SelectionView: NSView {
     case .resizing(let handle):
       changeSelection(
         SelectionGeometry.resize(originalRect, handle: handle, by: delta, inside: bounds))
+    case .text: break
+    case .movingAnnotation(let annotation):
+      let offset = AnnotationGeometry.constrainedOffset(
+        CGPoint(
+          x: delta.x * CGFloat(source.width) / bounds.width,
+          y: delta.y * CGFloat(source.height) / bounds.height),
+        for: annotation, inside: CGRect(origin: .zero, size: pixelRect.size))
+      pending = annotation.translated(by: offset)
     case .drawing:
       guard var pending else { return }
       let pixel = imagePoint(point)
@@ -203,15 +276,37 @@ final class SelectionView: NSView {
     refresh()
   }
 
+  /// 抬起时只提交一次拖动历史；短距离单击暂存原历史，便于双击确认撤回首击抖动造成的标记。
   override func mouseUp(with event: NSEvent) {
+    guard document?.isExporting != true else { return }
     mouseDragged(with: event)
-    if let pending {
+    if case .movingAnnotation(let original) = drag, let pending,
+      let first = original.points.first, let moved = pending.points.first
+    {
+      document?.moveAnnotation(
+        id: original.id, by: CGPoint(x: moved.x - first.x, y: moved.y - first.y))
+    } else if case .text = drag, let start {
+      let point = convert(event.locationInWindow, from: nil)
+      if hypot(point.x - start.x, point.y - start.y) < 3 { scheduleText(at: imagePoint(start)) }
+    } else if let pending, let document {
       let visible =
         pending.tool == .pen
         || (pending.tool == .arrow
           ? pending.rect.width > 2 || pending.rect.height > 2
           : pending.rect.width > 2 && pending.rect.height > 2)
-      if visible { document?.add(pending) }
+      if visible {
+        let history = document.history
+        document.add(pending)
+        if document.history.annotations.last?.id == pending.id {
+          selectedAnnotationID = pending.id
+          if let start, event.clickCount == 1 {
+            let end = convert(event.locationInWindow, from: nil)
+            if hypot(end.x - start.x, end.y - start.y) < 3 {
+              clickMark = (pending.id, history)
+            }
+          }
+        }
+      }
     }
     pending = nil
     start = nil
@@ -222,6 +317,8 @@ final class SelectionView: NSView {
 
   override func keyDown(with event: NSEvent) {
     guard document?.isExporting != true else { return }
+    cancelTextClick()
+    clickMark = nil
     if event.keyCode == 53 {
       onCancel?()
       return
@@ -247,6 +344,8 @@ final class SelectionView: NSView {
     guard let document, event.modifierFlags.contains(.command), !document.isExporting else {
       return super.performKeyEquivalent(with: event)
     }
+    cancelTextClick()
+    clickMark = nil
     switch event.charactersIgnoringModifiers?.lowercased() {
     case "s": document.save(asNewLocation: event.modifierFlags.contains(.shift), closeAfter: true)
     case "c": document.copy(closeAfter: true)
@@ -263,7 +362,10 @@ final class SelectionView: NSView {
   }
 
   override func rightMouseDown(with event: NSEvent) {
-    if document?.isExporting != true { onCancel?() }
+    if document?.isExporting != true {
+      cancelTextClick()
+      onCancel?()
+    }
   }
 
   /// 对新的逻辑选区进行像素对齐与裁剪，保留标注的原屏幕位置以及撤销历史。
@@ -300,9 +402,44 @@ final class SelectionView: NSView {
         max(0, (point.y - selection.minY) * CGFloat(source.height) / bounds.height)))
   }
 
-  /// 使用原生输入框接收文字与中文输入法；对话框在浮动截图窗口上方，空文本不创建标注。
+  /// 文字首击等待系统双击间隔，第二击、工具变化、输出或窗口释放均取消；不进行后台轮询。
+  private func scheduleText(at point: CGPoint) {
+    textClickTask = Task { @MainActor [weak self] in
+      do { try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval)) } catch { return }
+      guard !Task.isCancelled, let self, self.window != nil,
+        let document = self.document, !document.isExporting,
+        !document.isSelectingRegion, document.tool == .text
+      else { return }
+      self.textClickTask = nil
+      self.insertText(at: point)
+    }
+  }
+
+  private func cancelTextClick() {
+    textClickTask?.cancel()
+    textClickTask = nil
+  }
+
+  override func viewWillMove(toWindow newWindow: NSWindow?) {
+    if newWindow == nil { cancelTextClick() }
+    super.viewWillMove(toWindow: newWindow)
+  }
+
+  /// 调用文字输入器并提交非空文本；输入取消不修改历史，结束后恢复覆盖层键盘焦点。
   private func insertText(at point: CGPoint) {
-    guard let document else { return }
+    guard let document, let value = requestText() else { return }
+    let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return }
+    let annotation = Annotation(
+      tool: .text, points: [point], color: document.color, lineWidth: document.lineWidth, text: text
+    )
+    document.add(annotation)
+    selectedAnnotationID = annotation.id
+    window?.makeFirstResponder(self)
+  }
+
+  /// 原生文字面板支持中文输入法与粘贴；返回用户确认的文字，取消返回 nil，不访问截图数据。
+  private static func promptForText() -> String? {
     let alert = NSAlert()
     alert.window.level = .modalPanel
     alert.messageText = L.text("editor.textTitle")
@@ -312,14 +449,8 @@ final class SelectionView: NSView {
     field.placeholderString = L.text("editor.textPlaceholder")
     alert.accessoryView = field
     alert.window.initialFirstResponder = field
-    guard alert.runModal() == .alertFirstButtonReturn else { return }
-    let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return }
-    document.add(
-      Annotation(
-        tool: .text, points: [point], color: document.color, lineWidth: document.lineWidth,
-        text: text))
-    window?.makeFirstResponder(self)
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    return field.stringValue
   }
 
   /// 尺寸文字贴近选区左上边缘，使用阴影保持明暗背景可读；顶边无空间时放在选区内。

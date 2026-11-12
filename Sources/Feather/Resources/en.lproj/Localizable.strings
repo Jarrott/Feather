@@ -130,3 +130,4 @@
 "color.4" = "Violet";
 "color.5" = "White";
 "permission.reveal" = "Show this app in Finder";
+"overlay.doubleClick" = "Double-click inside the capture to finish, including while annotating.";

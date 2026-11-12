@@ -2,6 +2,24 @@ import Foundation
 
 /// 统一使用左上角为原点的图像坐标，避免 Retina 和 AppKit 坐标混用。
 public enum CaptureGeometry {
+  /// 用系统捕捉内容的点尺寸和像素比例计算完整分辨率；无效系统值回退至屏幕几何。
+  /// 返回向上取整的像素尺寸，无放大插值；两组输入都无效时返回 nil，避免整数转换崩溃。
+  public static func capturePixelSize(
+    contentSize: CGSize, pointPixelScale: CGFloat, fallbackSize: CGSize, backingScale: CGFloat
+  ) -> CGSize? {
+    for (size, scale) in [(contentSize, pointPixelScale), (fallbackSize, backingScale)] {
+      let width = size.width * scale
+      let height = size.height * scale
+      if size.width > 0, size.height > 0, scale > 0,
+        width.isFinite, height.isFinite, width > 0, height > 0,
+        width < CGFloat(Int.max), height < CGFloat(Int.max)
+      {
+        return CGSize(width: ceil(width), height: ceil(height))
+      }
+    }
+    return nil
+  }
+
   /// 将任意拖拽方向归一化并限制在边界内；不改变输入，不产生副作用。
   public static func selection(from start: CGPoint, to end: CGPoint, bounds: CGRect) -> CGRect {
     let rect = CGRect(

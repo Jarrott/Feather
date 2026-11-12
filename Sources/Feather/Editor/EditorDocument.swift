@@ -52,6 +52,13 @@ final class EditorDocument: NSObject, ObservableObject {
     status = nil
   }
 
+  /// 将一次标注拖动作为一条可撤销编辑提交；导出时忽略，实际移动后清除过期输出状态。
+  func moveAnnotation(id: UUID, by offset: CGPoint) {
+    guard !isExporting, history.move(id: id, by: offset) else { return }
+    savedURL = nil
+    status = nil
+  }
+
   /// 像素渲染后写入会话指定的 PNG 剪贴板；失败保留会话，成功可按调用参数关闭窗口。
   func copy(closeAfter: Bool = false) {
     guard !isExporting else { return }

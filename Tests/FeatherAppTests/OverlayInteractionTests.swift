@@ -67,8 +67,8 @@ struct OverlayInteractionTests {
     #expect(cancelled)
   }
 
-  @Test func doubleClickCopiesAnnotatedSelectionAndClosesOnce() throws {
-    try withSelection { view, document, window, pasteboard in
+  @Test func doubleClickCopiesAnnotatedSelectionAndClosesOnce() async throws {
+    try await withSelection { view, document, window, pasteboard in
       document.add(
         Annotation(
           tool: .redact, points: [CGPoint(x: 10, y: 10), CGPoint(x: 40, y: 40)],
@@ -93,30 +93,142 @@ struct OverlayInteractionTests {
     }
   }
 
-  @Test func doubleClickOutsideOnHandlesWhileDrawingOrExportingDoesNotConfirm() throws {
-    try withSelection { view, document, window, pasteboard in
+  @Test func doubleClickOutsideOnHandlesOrExportingDoesNotConfirm() async throws {
+    try await withSelection { view, document, window, pasteboard in
       var closeCount = 0
       document.onClose = { closeCount += 1 }
       try click(view, window: window, at: CGPoint(x: 500, y: 200), count: 2)
       try click(view, window: window, at: CGPoint(x: 102, y: 102), count: 2)
       document.isExporting = true
       try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 2)
-      document.isExporting = false
-      for tool in [AnnotationTool.rectangle, .pen] {
-        document.selectTool(tool)
-        try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 1)
-        try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 2)
-      }
       #expect(closeCount == 0 && pasteboard.data(forType: .png) == nil)
-      #expect(document.history.annotations.count == 2)
-      #expect(document.history.annotations.allSatisfy { $0.tool == .pen })
+      #expect(document.history.annotations.isEmpty)
+    }
+  }
+
+  @Test(arguments: AnnotationTool.allCases)
+  func everyToolCanDoubleClickToFinishWithoutExtraMarks(tool: AnnotationTool) async throws {
+    var textRequests = 0
+    let requestText: @MainActor () -> String? = {
+      textRequests += 1
+      return "unexpected"
+    }
+    try await withSelection(requestText: requestText) { view, document, window, pasteboard in
+      document.add(
+        Annotation(
+          tool: .rectangle, points: [CGPoint(x: 20, y: 20), CGPoint(x: 80, y: 70)],
+          color: InkColor.palette[0]))
+      // 保留一个重做分支，验证画笔双击撤回首击时不会丢失此前的历史。
+      document.add(
+        Annotation(
+          tool: .arrow, points: [.zero, CGPoint(x: 20, y: 20)], color: InkColor.palette[0]))
+      document.history.undo()
+      let annotations = document.history.annotations
+      document.selectTool(tool)
+      var closeCount = 0
+      document.onClose = { closeCount += 1 }
+      // 等待此前的 Published 通知，模拟用户选工具后再点击。
+      await Task.yield()
+      try click(view, window: window, at: CGPoint(x: 300, y: 250), count: 1)
+      try click(view, window: window, at: CGPoint(x: 300, y: 250), count: 2)
+      try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.05))
+      #expect(closeCount == 1 && textRequests == 0)
+      #expect(document.history.annotations == annotations && document.history.canRedo)
+      let data = try #require(pasteboard.data(forType: .png))
+      let bitmap = try #require(NSBitmapImageRep(data: data))
+      #expect((bitmap.colorAt(x: 200, y: 150)?.redComponent ?? 0) > 0.9)
+      #expect((bitmap.colorAt(x: 200, y: 150)?.greenComponent ?? 0) > 0.9)
+    }
+  }
+
+  @Test(arguments: AnnotationTool.allCases)
+  func doubleClickWithSmallPointerJitterDiscardsFirstMark(tool: AnnotationTool) async throws {
+    try await withSelection { view, document, window, pasteboard in
+      document.selectTool(tool)
+      var closeCount = 0
+      document.onClose = { closeCount += 1 }
+      view.mouseDown(
+        with: try mouse(.leftMouseDown, point: CGPoint(x: 300, y: 250), window: window))
+      view.mouseUp(with: try mouse(.leftMouseUp, point: CGPoint(x: 302, y: 251), window: window))
+      try click(view, window: window, at: CGPoint(x: 302, y: 251), count: 2)
+      #expect(closeCount == 1 && document.history.annotations.isEmpty)
+      #expect(pasteboard.data(forType: .png) != nil)
+    }
+  }
+
+  @Test(arguments: [CGFloat(1), CGFloat(2)])
+  func drawnRectangleCanMoveUndoAndExportAtOriginalResolution(scale: CGFloat) async throws {
+    try await withSelection(scale: scale) { view, document, window, pasteboard in
+      document.selectTool(.rectangle)
+      func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x / scale, y: y / scale) }
+      try drag(view, window: window, from: point(140, 140), to: point(240, 220))
+      let original = try #require(document.history.annotations.first)
+      try drag(view, window: window, from: point(140, 180), to: point(190, 200))
+      #expect(document.history.annotations.count == 1)
+      let moved = try #require(document.history.annotations.first)
+      #expect(moved.id == original.id && moved.rect == CGRect(x: 90, y: 60, width: 100, height: 80))
+      #expect(document.image.width == 300 && document.image.height == 200)
+      try await preview(view, name: "moved-annotation-\(Int(scale))x.png")
+      document.history.undo()
+      #expect(document.history.annotations == [original])
+      document.history.redo()
+      #expect(document.history.annotations == [moved])
+      try click(view, window: window, at: point(300, 260), count: 1)
+      try click(view, window: window, at: point(300, 260), count: 2)
+      let data = try #require(pasteboard.data(forType: .png))
+      let bitmap = try #require(NSBitmapImageRep(data: data))
+      #expect(bitmap.pixelsWide == 300 && bitmap.pixelsHigh == 200)
+      #expect((bitmap.colorAt(x: 90, y: 90)?.greenComponent ?? 1) < 0.5)
+      #expect((bitmap.colorAt(x: 40, y: 70)?.greenComponent ?? 0) > 0.9)
+    }
+  }
+
+  @Test func topmostAnnotationMovesAndEmptyRectangleInteriorStillDraws() async throws {
+    try await withSelection { view, document, window, _ in
+      document.selectTool(.rectangle)
+      let first = Annotation(
+        tool: .rectangle, points: [CGPoint(x: 20, y: 20), CGPoint(x: 180, y: 140)],
+        color: InkColor.palette[0])
+      let second = Annotation(tool: .rectangle, points: first.points, color: InkColor.palette[1])
+      document.add(first)
+      document.add(second)
+      try drag(view, window: window, from: CGPoint(x: 120, y: 180), to: CGPoint(x: 140, y: 190))
+      #expect(document.history.annotations[0] == first)
+      #expect(document.history.annotations[1].points[0] == CGPoint(x: 40, y: 30))
+      try drag(view, window: window, from: CGPoint(x: 180, y: 170), to: CGPoint(x: 220, y: 200))
+      #expect(document.history.annotations.count == 3)
+      try drag(
+        view, window: window, from: CGPoint(x: 120, y: 160), to: CGPoint(x: 160, y: 200),
+        modifiers: .option)
+      #expect(document.history.annotations.count == 4)
+      #expect(document.history.annotations[0] == first)
+    }
+  }
+
+  @Test func singleTextClickStillRequestsTextAndWindowCloseCancelsDeferredInput() async throws {
+    var requests = 0
+    let requestText: @MainActor () -> String? = {
+      requests += 1
+      return "Note"
+    }
+    try await withSelection(requestText: requestText) { view, document, window, _ in
+      document.selectTool(.text)
+      await Task.yield()
+      try click(view, window: window, at: CGPoint(x: 300, y: 250), count: 1)
+      try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.1))
+      #expect(requests == 1 && document.history.annotations.first?.text == "Note")
+      try click(view, window: window, at: CGPoint(x: 180, y: 180), count: 1)
+      window.contentView = nil
+      try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.1))
+      #expect(requests == 1)
     }
   }
 
   /// 构造未显示的选区与独立剪贴板，结束后释放资源；不访问桌面、系统剪贴板或真实用户偏好。
   private func withSelection(
-    _ body: (SelectionView, EditorDocument, NSWindow, NSPasteboard) throws -> Void
-  ) throws {
+    scale: CGFloat = 1, requestText: @escaping @MainActor () -> String? = { nil },
+    _ body: @MainActor (SelectionView, EditorDocument, NSWindow, NSPasteboard) async throws -> Void
+  ) async throws {
     _ = NSApplication.shared
     let suite = "FeatherDoubleClickTests.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
@@ -136,14 +248,16 @@ struct OverlayInteractionTests {
       image: try #require(image.cropping(to: rect)), appModel: AppModel(defaults: defaults),
       pasteboard: pasteboard)
     let window = NSWindow(
-      contentRect: CGRect(x: 0, y: 0, width: 800, height: 600), styleMask: .borderless,
+      contentRect: CGRect(x: 0, y: 0, width: 800 / scale, height: 600 / scale),
+      styleMask: .borderless,
       backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     defer { window.close() }
-    let view = SelectionView(image: image, frame: window.contentLayoutRect)
+    let view = SelectionView(
+      image: image, frame: window.contentLayoutRect, requestText: requestText)
     window.contentView = view
     view.beginEditing(document, pixelRect: rect)
-    try body(view, document, window, pasteboard)
+    try await body(view, document, window, pasteboard)
   }
 
   private func click(_ view: SelectionView, window: NSWindow, at point: CGPoint, count: Int) throws
@@ -152,21 +266,39 @@ struct OverlayInteractionTests {
     view.mouseUp(with: try mouse(.leftMouseUp, point: point, window: window, clickCount: count))
   }
 
-  private func drag(_ view: SelectionView, window: NSWindow, from start: CGPoint, to end: CGPoint)
-    throws
-  {
-    view.mouseDown(with: try mouse(.leftMouseDown, point: start, window: window))
+  private func drag(
+    _ view: SelectionView, window: NSWindow, from start: CGPoint, to end: CGPoint,
+    modifiers: NSEvent.ModifierFlags = []
+  ) throws {
+    view.mouseDown(
+      with: try mouse(.leftMouseDown, point: start, window: window, modifiers: modifiers))
     view.mouseDragged(with: try mouse(.leftMouseDragged, point: end, window: window))
     view.mouseUp(with: try mouse(.leftMouseUp, point: end, window: window))
   }
 
   private func mouse(
-    _ type: NSEvent.EventType, point: CGPoint, window: NSWindow, clickCount: Int = 1
+    _ type: NSEvent.EventType, point: CGPoint, window: NSWindow, clickCount: Int = 1,
+    modifiers: NSEvent.ModifierFlags = []
   ) throws -> NSEvent {
     try #require(
       NSEvent.mouseEvent(
-        with: type, location: CGPoint(x: point.x, y: 600 - point.y), modifierFlags: [],
+        with: type,
+        location: CGPoint(x: point.x, y: (window.contentView?.bounds.height ?? 600) - point.y),
+        modifierFlags: modifiers,
         timestamp: 0, windowNumber: window.windowNumber, context: nil,
         eventNumber: 1, clickCount: clickCount, pressure: 1))
+  }
+
+  /// 仅在显式指定目录时保存自有视图的离屏预览；不显示窗口、不读取用户桌面。
+  private func preview(_ view: NSView, name: String) async throws {
+    guard let path = ProcessInfo.processInfo.environment["FEATHER_PREVIEW_DIR"] else { return }
+    let directory = URL(fileURLWithPath: path, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try await Task.sleep(for: .milliseconds(60))
+    view.layoutSubtreeIfNeeded()
+    let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    let data = try #require(bitmap.representation(using: .png, properties: [:]))
+    try data.write(to: directory.appendingPathComponent(name))
   }
 }
