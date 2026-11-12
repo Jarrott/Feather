@@ -1,6 +1,7 @@
 import AppKit
 import FeatherCore
-import ScreenCaptureKit
+// 兼容旧 SDK 尚未标注 Sendable 的只读内容快照；获取后仅在 MainActor 读取，不跨任务共享。
+@preconcurrency import ScreenCaptureKit
 
 /// 一次捕捉的屏幕和静态原图，仅在截图会话中持有，不持久化屏幕内容。
 @MainActor

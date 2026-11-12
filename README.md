@@ -49,6 +49,8 @@ open dist/Feather.app
 
 `.signing-identity` 已被 Git 忽略。后续构建保持同一签名身份；日常使用建议将应用放到「应用程序」文件夹，再授权。
 
+提交前在本机执行 `./scripts/validate.sh`，完成格式、测试、6K 基准和签名构建；GitHub Actions 仅手动运行。
+
 ## 文档
 
 - [详细功能](docs/FEATURES.md) · [权限与启动排障](docs/TROUBLESHOOTING.md)

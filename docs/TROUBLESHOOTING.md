@@ -33,6 +33,6 @@ tccutil reset ScreenCapture com.feather.screenshot
 ## 构建与签名
 
 - 构建脚本从 `CODE_SIGN_IDENTITY` 环境变量或本机 `.signing-identity` 文件读取证书，未配置时会停止。
-- Apple Development 用于本机开发；对外分发需要 Developer ID Application 签名和 Apple 公证。脚本按当前 Mac 的 CPU 架构构建。
+- Apple Development 用于本机开发；对外分发需要 Developer ID Application 签名和 Apple 公证。脚本默认按当前 Mac 的 CPU 架构构建；`FEATHER_RELEASE=1` 或 `FEATHER_UNIVERSAL=1` 时构建 arm64 + x86_64 通用二进制。
 - 仅做临时构建验证时可使用 `CODE_SIGN_IDENTITY=- ./scripts/build-app.sh`。ad-hoc 重建可能改变应用身份，不能保证已有权限延续。
 - 在 Xcode 中打开 `Package.swift` 开发；验证截图权限与菜单栏时，运行打包后的 `.app`。

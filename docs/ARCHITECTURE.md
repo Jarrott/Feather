@@ -24,12 +24,14 @@ AppDelegate / AppModel → 菜单栏、快捷键、设置、SavedRegion
 - `Task.detached` 执行全部合成、编码和写盘，完成后返回 Data/URL/CGImage。导出期间禁止编辑、重复输出和退出，失败保留会话。
 - 渲染内核不依赖 AppKit，不标记 MainActor；文字使用 CoreText。每次测量/绘制创建独立排版对象，不跨线程复用 CTFrame/CTFramesetter。
 - 无标注 PNG 直接 ImageIO 编码原图；有标注时在源 RGB 色域合成一次。马赛克仅降采样指定区域，并尊重纯黑遮盖区域。
+- 贴图复用 `AnnotationRenderer.composite` 直接取得位图，不做 PNG 编解码往返；窗口设置 `hidesOnDeactivate = false`，切换应用仍可对照。
 - 剪贴板先准备新项目与最多 64 MiB 的原内容快照；备份失败即返回。写入失败后仅在 changeCount 未变化时恢复，避免覆盖其他应用的新内容。恢复是尽力而为，系统接口无跨进程原子事务。
 
 ## 捕捉和会话
 
 - 捕捉由用户触发，系统每次检查权限。仅 `SCStreamError.userDeclined` 更新为拒绝；普通错误、取消不改变权限状态。
 - 启动权限状态未知，不读取 `CGPreflightScreenCaptureAccess()`；无后台权限轮询。
+- 旧版 SDK 未为 SCShareableContent 标注 Sendable，服务文件使用 `@preconcurrency import ScreenCaptureKit` 兼容；返回的只读快照仅在 MainActor 读取，不增加共享可变状态或关闭全局并发检查。参见 [Swift SDK 迁移说明](https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/incrementaladoption/)。
 - 多屏通过结构化任务组并行取静态图，按原屏幕顺序组装；过滤器以 ID/frame/缩放为缓存键，屏幕变化、失败或取消使其失效。缓存不包含图像或授权。
 - 窗口截图使用 desktopIndependentWindow 过滤器，不等同于桌面裁剪。用户选择窗口后才取图；窗口关闭导致的错误走统一失败流程。
 - 框选前屏幕参数变化取消请求；编辑中落定手势/文字并保留原始 CGImage 与历史，窗口等比例适配可用屏幕。没有屏幕时等待恢复，不重新采集。
@@ -57,7 +59,8 @@ AppDelegate / AppModel → 菜单栏、快捷键、设置、SavedRegion
 
 - Swift Package，无第三方依赖，macOS 14+。Bundle ID 保留 `com.feather.screenshot`，避免无必要的权限身份迁移。
 - 默认读取本机 `.signing-identity` 或 CODE_SIGN_IDENTITY，固定签名；暂存应用完成签名验证后再替换 dist，只保留一个回滚副本。
-- CI 使用 macOS runner 执行格式、测试和显式 ad-hoc 验证构建，不将其当作正式发行。
+- 日常执行 `scripts/validate.sh` 在本机验证；Actions 仅手动触发，复用同一脚本并显式使用 ad-hoc 验证构建，不将其当作正式发行。
+- 本机默认当前 CPU 架构；正式发行默认 arm64 + x86_64 通用二进制，打包名称取自实际二进制架构。
 - 正式发行单独启用 hardened runtime/时间戳，要求 Developer ID 签名、公证、staple 和 Gatekeeper 验证；人工触发工作流创建 Release 草稿。详见 [发行说明](RELEASING.md)。
 
 参考：[Apple CoreText 线程规则](https://developer.apple.com/documentation/CoreText)、[SCContentFilter](https://developer.apple.com/documentation/screencapturekit/sccontentfilter)。

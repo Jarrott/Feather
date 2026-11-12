@@ -17,6 +17,8 @@
 - scripts/build-app.sh：构建并签名本地 app；产物不进入版本控制。
 
 ## 验证
+本机统一运行 `./scripts/validate.sh`，包含以下自动检查及 Release 配置的 6K 基准；GitHub Actions 只保留手动触发，不以推送代替本机验证。
+
 1. `swift format lint --strict --recursive Sources Tests Package.swift`
 2. `swift test`
 3. `./scripts/build-app.sh`
@@ -45,3 +47,4 @@
 - 马赛克不能重新显示被纯黑遮盖保护的源像素；模板拒绝目录穿越并保持不覆盖保存。
 - 本机签名身份与 Bundle ID 保持稳定；正式发布须 Developer ID、公证和 Gatekeeper 验证，CI ad-hoc 产物不作为正式发行。
 - 性能基准使用生成的 6K 图，命令及指标见 TESTING.md；不能以离屏基准代替真实帧率、VoiceOver 或多屏验收。
+- 贴图不随应用失去前台而隐藏；只需位图时不得先编码 PNG 再解码。自动化窗口测试必须保持隐藏。

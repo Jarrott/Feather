@@ -89,7 +89,13 @@ public enum AnnotationRenderer {
   /// 以原始像素和颜色空间导出 PNG；无标注时直接编码原图，避免额外全图拷贝与颜色转换。
   /// 有标注时只合成一次，RGB 图片保留原色域；内存分配或编码失败抛出英文错误，不写磁盘。
   public static func png(image: CGImage, annotations: [Annotation]) throws -> Data {
-    if annotations.isEmpty { return try encodePNG(image) }
+    try encodePNG(composite(image: image, annotations: annotations))
+  }
+
+  /// 在原图色域合成全部标注并返回位图；无标注时直接返回原图，不做拷贝。
+  /// 贴图等只需位图的场景可直接使用，避免 PNG 编码再解码。
+  public static func composite(image: CGImage, annotations: [Annotation]) throws -> CGImage {
+    if annotations.isEmpty { return image }
     let colorSpace =
       image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
       ?? CGColorSpace(name: CGColorSpace.sRGB)!
@@ -109,7 +115,7 @@ public enum AnnotationRenderer {
       draw(annotation, in: context, image: image, redactions: redactions)
     }
     guard let output = context.makeImage() else { throw ExportError.renderFailed }
-    return try encodePNG(output)
+    return output
   }
 
   /// 将像素图及其颜色配置交给 ImageIO 无损编码；不重采样、不强制转成 sRGB。

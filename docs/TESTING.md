@@ -1,6 +1,14 @@
 # 验证与回归
 
 ## 自动化
+配置固定签名身份后，一条命令完成本机验证；遇到失败立即停止，不提交或推送：
+
+```bash
+./scripts/validate.sh
+```
+
+脚本包含格式、Shell 语法、Info.plist、完整测试、Release 6K 基准、应用构建、签名与 diff 检查。GitHub Actions 仅保留手动入口，并复用该脚本。下面的命令仍可用于定位单独步骤：
+
 ```bash
 swift format lint --strict --recursive Sources Tests Package.swift scripts/create-icon.swift
 swift test
@@ -43,6 +51,19 @@ Swift Testing 覆盖：双向拖拽、Retina 比例、非整数像素和显示�
 | 录制取消 / 冲突 | Esc、外点、失焦或关设置取消；冲突时旧组合仍可用 |
 | 重复截图 / 保存 | 聚焦同一选区，不创建多次会话或并行写入 |
 | 中英文 | 精简设置、工具条提示、菜单和错误文案显示完整 |
+
+## PR #2 本机合并验证
+
+2026-11-12，Apple M4 Max，macOS 27.0.1，Xcode 27.1 / Swift 6.4：
+
+- PR #2 基于当前 main，合并无代码冲突；审查保留贴图持续显示、直接位图合成及双架构打包三项改动。
+- `./scripts/validate.sh` 通过：42 个核心测试 + 49 个应用测试 = **91 项回归**，默认跳过的 6K 基准已单独以 Release 配置运行通过，合计 **92 项**。
+- 新增贴图回归使用隐藏窗口；注入必定报错的 PNG 编码器仍贴图成功，同时校验遮盖/背景像素、浮动层级与不随失焦隐藏的属性。没有向真实桌面显示测试贴图，也没有执行跨应用切换的人工验收。
+- 6K 单次基准：PNG 合成与编码 302.3 ms，30 次整图离屏重画 209.5 ms，30 次局部重画 25.1 ms。不是贴图新旧路径的耗时比较，也不代表实际屏幕帧率。
+- 常规 arm64 构建约 1.8 MB；`FEATHER_UNIVERSAL=1 ./scripts/build-app.sh` 成功生成约 3.3 MB 的 x86_64 + arm64 应用，两份 Mach-O 的最低系统版本均为 14.0。Xcode 27 对 x86_64 发出弃用警告，未阻止构建；未进行 Intel 实机运行或正式公证。
+- 两种构建严格签名验证通过，designated requirement 一致；本地产物恢复为常规 arm64 版，未安装、启动或修改截图权限。
+- YAML 手动触发配置、159 个中英文键和占位符、源码行数、脚本语法、Info.plist 及 diff 检查通过。
+- [此前 Actions 失败](https://github.com/Jarrott/Feather/actions/runs/43227838255)发生在编译阶段：Swift 6.1.2 / Xcode 16.4 SDK 中 SCShareableContent 未标注 Sendable。已按该编译器建议增加限定导入的 `@preconcurrency` 兼容处理；本机无 Swift 6.1 工具链，未重新运行远端检查，不能将本机结果表述为该 runner 已通过。
 
 ## 1.4.0 执行记录
 

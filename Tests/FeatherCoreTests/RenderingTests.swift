@@ -27,6 +27,25 @@ struct RenderingTests {
         provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
   }
 
+  @Test func compositeMatchesEncodedPNGAndSkipsCopyWithoutAnnotations() throws {
+    let image = try sourceImage()
+    #expect(try AnnotationRenderer.composite(image: image, annotations: []) === image)
+    let annotations = [
+      Annotation(
+        tool: .redact, points: [CGPoint(x: 10, y: 10), CGPoint(x: 30, y: 20)],
+        color: InkColor.palette[0])
+    ]
+    let composed = try AnnotationRenderer.composite(image: image, annotations: annotations)
+    let data = try AnnotationRenderer.png(image: image, annotations: annotations)
+    let decoded = try #require(NSBitmapImageRep(data: data))
+    let direct = NSBitmapImageRep(cgImage: composed)
+    #expect(direct.pixelsWide == decoded.pixelsWide && direct.pixelsHigh == decoded.pixelsHigh)
+    for point in [(20, 15), (50, 10), (50, 70)] {
+      #expect(direct.colorAt(x: point.0, y: point.1) == decoded.colorAt(x: point.0, y: point.1))
+    }
+    #expect(direct.colorAt(x: 20, y: 15)?.redComponent == 0)
+  }
+
   @Test func losslessExportPreservesSizeAndOrientation() throws {
     let data = try AnnotationRenderer.png(image: sourceImage(), annotations: [])
     let result = try #require(NSBitmapImageRep(data: data))

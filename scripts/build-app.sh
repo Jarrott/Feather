@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# 构建当前 Mac 架构的应用；签名身份必须显式固定，不安装、不启动、不修改系统权限。
+# 默认构建当前 Mac 架构，正式发行默认双架构；固定签名，不安装、不启动、不修改系统权限。
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:-}"
@@ -17,8 +17,13 @@ fi
 if [ "$SIGNING_IDENTITY" = '-' ]; then
     printf '%s\n' 'Warning: explicit ad-hoc signing changes app identity on rebuild; screen access may need approval again.' >&2
 fi
-swift build -c release
-BIN_DIR="$(swift build -c release --show-bin-path)"
+# 正式发行默认构建 arm64 + x86_64 通用二进制，Intel Mac 也可使用；FEATHER_UNIVERSAL=0/1 可覆盖。
+BUILD_OPTIONS=(-c release)
+if [ "${FEATHER_UNIVERSAL:-${FEATHER_RELEASE:-0}}" = '1' ]; then
+    BUILD_OPTIONS+=(--arch arm64 --arch x86_64)
+fi
+swift build "${BUILD_OPTIONS[@]}"
+BIN_DIR="$(swift build "${BUILD_OPTIONS[@]}" --show-bin-path)"
 APP_DIR="$PROJECT_ROOT/dist/Feather.app"
 STAGING_DIR="$(mktemp -d "$PROJECT_ROOT/.build/Feather-package.XXXXXX")"
 trap 'rm -rf "$STAGING_DIR"' EXIT
@@ -52,6 +57,7 @@ if ! mv "$STAGED_APP" "$APP_DIR"; then
     if [ -d "$PREVIOUS_APP" ]; then mv "$PREVIOUS_APP" "$APP_DIR"; fi
     exit 1
 fi
+printf 'Architectures: %s\n' "$(lipo -archs "$APP_DIR/Contents/MacOS/Feather")"
 du -sh "$APP_DIR"
 printf 'Built: %s\n' "$APP_DIR"
 printf '%s\n' 'Quit any running older copy before opening this build. A signing identity change requires fresh system approval.'
