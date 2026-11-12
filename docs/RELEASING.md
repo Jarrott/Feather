@@ -4,14 +4,14 @@
 
 按 README 配置固定 Apple Development 签名身份后运行 `./scripts/build-app.sh`。更新前退出旧应用，验证时保持原安装位置。构建不会安装或修改系统权限。
 
-`FEATHER_RELEASE=1` 只为正式发行启用 hardened runtime 和时间戳；正常本机构建保持既有签名方式和 Bundle ID。
+`FEATHER_RELEASE=1` 只为正式发行启用 hardened runtime 和时间戳，并默认构建 arm64 + x86_64 通用二进制；正常本机构建保持既有签名方式、Bundle ID 和当前 CPU 架构。`FEATHER_UNIVERSAL=1` 可在本机构建通用二进制，`FEATHER_UNIVERSAL=0` 可让正式构建只出当前架构。
 
 ## GitHub Actions
 
 - `macOS checks`：main push、PR 或手动触发，执行 Swift 格式检查、完整测试、Release 构建和签名验证。
 - CI 显式使用 ad-hoc 签名，仅验证打包，不发布可下载版本。
 - `Prepare signed release`：仅手动触发。先检查已有标签与 Info.plist 版本一致，再验证、签名、公证，最后创建可审阅的 Release 草稿；不自动发布。
-- 默认 runner 为 macos-15，产物按实际 CPU 架构命名。当前工作流不承诺 Universal Binary。
+- 默认 runner 为 macos-15。发行构建为通用二进制，同时支持 Apple 芯片与 Intel Mac；产物按二进制实际架构命名，通用版本为 `universal`。
 
 正式发行需要配置 GitHub 的 `release` Environment，可设置审批人员；在该环境添加以下 Secrets，勿放入仓库：
 
@@ -42,6 +42,6 @@ CODE_SIGN_IDENTITY='Developer ID Application: YOUR_NAME (TEAM_ID)' FEATHER_RELEA
 NOTARY_PROFILE='YOUR_KEYCHAIN_PROFILE' ./scripts/package-release.sh
 ```
 
-打包脚本验证 Developer ID 签名，提交公证、装订凭证并执行 Gatekeeper 检查，输出 `dist/Feather-版本-架构.zip` 与校验文件；不会推送 Git 或自行发布。尚未完成正式公证的应用不能宣称已可直接对外分发。
+打包脚本验证 Developer ID 签名，提交公证、装订凭证并执行 Gatekeeper 检查，输出 `dist/Feather-版本-架构.zip`（通用二进制为 `universal`）与校验文件；不会推送 Git 或自行发布。尚未完成正式公证的应用不能宣称已可直接对外分发。
 
 参考：[GitHub macOS runner](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)、[gh release create](https://cli.github.com/manual/gh_release_create)。

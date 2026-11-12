@@ -83,6 +83,39 @@ struct ExportResponsivenessTests {
     #expect(!closed && pinned.error == L.text("pin.failed"))
   }
 
+  /// 贴图直接合成位图，不依赖 PNG 编码器；贴图窗口在应用切到后台后仍保持显示。
+  @Test func pinComposesWithoutEncodingAndStaysVisibleAfterDeactivation() async throws {
+    _ = NSApplication.shared
+    let suite = "FeatherPinTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let context = try #require(
+      CGContext(
+        data: nil, width: 64, height: 64, bitsPerComponent: 8,
+        bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+    let image = try #require(context.makeImage())
+    let model = AppModel(defaults: defaults)
+    let document = EditorDocument(image: image, appModel: model) { _, _ in
+      Issue.record("pin must not encode PNG")
+      throw ExportError.renderFailed
+    }
+    document.add(
+      Annotation(
+        tool: .redact, points: [CGPoint(x: 0, y: 0), CGPoint(x: 32, y: 32)],
+        color: .palette[0]))
+    let controller = PinnedImageController()
+    document.onPin = { controller.pin($0, model: model) }
+    document.pin()
+    await document.exportTask?.value
+    #expect(document.error == nil)
+    let window = try #require(controller.windows.first)
+    defer { window.close() }
+    #expect(!window.hidesOnDeactivate && window.level == .floating)
+  }
+
   @Test func clipboardFailureRestoresAllOriginalTypesAndItems() throws {
     let pasteboard = NSPasteboard.withUniqueName()
     defer { pasteboard.releaseGlobally() }

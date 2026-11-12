@@ -1,6 +1,5 @@
 import AppKit
 import FeatherCore
-import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -158,6 +157,11 @@ final class EditorDocument: NSObject, ObservableObject {
       do {
         let result = try await Task.detached(priority: .userInitiated) {
           try autoreleasepool {
+            // 贴图只需位图，直接合成，跳过 PNG 编码与解码。
+            if case .pin = destination {
+              let pinned = try AnnotationRenderer.composite(image: image, annotations: annotations)
+              return (Data(), URL?.none, CGImage?.some(pinned))
+            }
             let data = try render(image, annotations)
             var url: URL?
             if case .save(let chosen) = destination {
@@ -170,15 +174,7 @@ final class EditorDocument: NSObject, ObservableObject {
                   imageSize: CGSize(width: image.width, height: image.height))
               }
             }
-            let pinned: CGImage?
-            if case .pin = destination,
-              let source = CGImageSourceCreateWithData(data as CFData, nil)
-            {
-              pinned = CGImageSourceCreateImageAtIndex(source, 0, nil)
-            } else {
-              pinned = nil
-            }
-            return (data, url, pinned)
+            return (data, url, CGImage?.none)
           }
         }.value
         switch destination {

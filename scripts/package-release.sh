@@ -13,7 +13,13 @@ if ! [[ "$SIGNATURE" == *'Authority=Developer ID Application:'* ]]; then
     exit 1
 fi
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
-ARCHITECTURE="$(uname -m)"
+# 包含 arm64 与 x86_64 时标记为 universal，否则使用实际二进制架构（而非构建机架构）。
+ARCHS="$(lipo -archs "$APP/Contents/MacOS/Feather")"
+if [[ " $ARCHS " == *' arm64 '* && " $ARCHS " == *' x86_64 '* ]]; then
+    ARCHITECTURE=universal
+else
+    ARCHITECTURE="${ARCHS// /-}"
+fi
 ARCHIVE="dist/Feather-${VERSION}-${ARCHITECTURE}.zip"
 ditto -c -k --keepParent "$APP" "$ARCHIVE"
 xcrun notarytool submit "$ARCHIVE" --keychain-profile "$NOTARY_PROFILE" --wait

@@ -11,6 +11,7 @@
 | AnnotationGeometry.bounds / contains / constrainedOffset | 标注/像素点/容差 → 几何结果 | 命中、脏区、拖动；与 TextLayout 共用测量 |
 | TextLayout.size / draw | 标注 → CGSize / CGContext 绘制 | 无 MainActor；每次调用独立创建 CoreText 排版对象 |
 | AnnotationRenderer.draw / png | 标注、上下文、可选源图和遮盖区域 / CGImage、标注数组 → Data | 纯后台安全内核；源 RGB 色域，PNG 无损；失败抛 ExportError |
+| AnnotationRenderer.composite | CGImage、标注数组 → CGImage | 与 png 同一合成路径但不编码；无标注时返回原图本身；贴图使用，失败抛 ExportError |
 | AnnotationHistory.append / move / remove / replace | 标注或 ID/偏移 → Bool | 无效或无变化返回 false；新增、移动、删除、文字替换统一进历史 |
 | AnnotationHistory.previewCrop / commitCrop | 当前/起始全图像素矩形 | 拖动预览平移坐标，完成仅记录一次裁剪；undo/redo 同步恢复 |
 | FilenameTemplate.validated / filename | 模板/日期/像素尺寸/随机 ID → String | 仅白名单变量，不允许路径或控制字符，非法抛 invalidFilename |

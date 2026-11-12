@@ -5,7 +5,7 @@ import SwiftUI
 /// 有界的内存贴图窗口；退出应用释放图片，最多八张，不在后台创建截图或历史文件。
 @MainActor
 final class PinnedImageController: NSObject, NSWindowDelegate {
-  private var windows: [NSWindow] = []
+  private(set) var windows: [NSWindow] = []
 
   /// 从已经合成的图像创建可拖动贴图；达到上限返回 false，保留原编辑会话。
   func pin(_ image: CGImage, model: AppModel) -> Bool {
@@ -25,6 +25,8 @@ final class PinnedImageController: NSObject, NSWindowDelegate {
       styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     window.title = L.text("editor.pin")
     window.level = .floating
+    // NSPanel 默认在应用失去前台时隐藏；贴图需要在切换到其他应用后继续可见。
+    window.hidesOnDeactivate = false
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.isReleasedWhenClosed = false
     window.isMovableByWindowBackground = true
