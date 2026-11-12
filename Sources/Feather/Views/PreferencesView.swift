@@ -3,6 +3,7 @@ import SwiftUI
 /// 菜单栏右键打开的精简设置；仅保留截图快捷键、输出目录、复制与鼠标选项。
 struct PreferencesView: View {
   @ObservedObject var model: AppModel
+  @State private var filenameTemplate = ""
 
   var body: some View {
     ScrollView {
@@ -14,7 +15,7 @@ struct PreferencesView: View {
             Text(L.text("menu.tooltip")).font(.system(size: 11)).foregroundStyle(Theme.muted)
           }
           Spacer()
-          Text("v1.3.1").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.muted)
+          Text("v1.4.0").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.muted)
         }
         if let error = model.error {
           Label(error, systemImage: "exclamationmark.circle").font(.system(size: 11))
@@ -35,6 +36,15 @@ struct PreferencesView: View {
               QuietButtonStyle())
           }
           Divider()
+          Text(L.text("settings.filename")).font(.system(size: 12, weight: .medium))
+          HStack {
+            TextField(L.text("settings.filename"), text: $filenameTemplate)
+              .textFieldStyle(.roundedBorder)
+              .onSubmit { _ = model.setFilenameTemplate(filenameTemplate) }
+            Button(L.text("settings.apply")) { _ = model.setFilenameTemplate(filenameTemplate) }
+          }
+          Text(L.text("settings.filenameHint")).font(.system(size: 10)).foregroundStyle(Theme.muted)
+          Divider()
           Toggle(L.text("settings.copy"), isOn: $model.copyAfterSave).toggleStyle(.switch)
             .controlSize(.small)
           Toggle(L.text("settings.cursor"), isOn: $model.showCursor).toggleStyle(.switch)
@@ -43,7 +53,10 @@ struct PreferencesView: View {
           .white, in: RoundedRectangle(cornerRadius: 10))
         HStack {
           Label(
-            L.text(model.permissionGranted ? "permission.ready" : "permission.needed"),
+            L.text(
+              !model.permissionKnown
+                ? "permission.unknown"
+                : model.permissionGranted ? "permission.ready" : "permission.needed"),
             systemImage: model.permissionGranted ? "checkmark.circle" : "exclamationmark.circle"
           )
           .foregroundStyle(model.permissionGranted ? Theme.accent : .orange)
@@ -51,7 +64,8 @@ struct PreferencesView: View {
           Button(L.text("permission.settings")) { model.openPrivacySettings() }.buttonStyle(.link)
         }.font(.system(size: 11))
       }.padding(22)
-    }.background(Theme.background).foregroundStyle(Theme.ink).environment(\.colorScheme, .light)
+    }.onAppear { filenameTemplate = model.filenameTemplate }.background(Theme.background)
+      .foregroundStyle(Theme.ink).environment(\.colorScheme, .light)
   }
 }
 

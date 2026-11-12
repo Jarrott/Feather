@@ -67,7 +67,7 @@ struct RenderingTests {
     let original = try AnnotationRenderer.png(image: image, annotations: [])
     for tool in AnnotationTool.allCases {
       let annotation = Annotation(
-        tool: tool, points: [CGPoint(x: 10, y: 10), CGPoint(x: 60, y: 30)],
+        tool: tool, points: [CGPoint(x: 10, y: 10), CGPoint(x: 60, y: tool == .mosaic ? 60 : 30)],
         color: InkColor(0, 1, 0), lineWidth: 3, text: "Test 标注")
       let result = try AnnotationRenderer.png(image: image, annotations: [annotation])
       #expect(result != original, "Tool \(tool.rawValue) should change visible pixels")

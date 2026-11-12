@@ -1,0 +1,77 @@
+name: Prepare signed release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, for example v1.4.0
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: feather-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify tag and version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test "${RELEASE_TAG#v}" = "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)"
+      - name: Validate
+        run: |
+          swift format lint --strict --recursive Sources Tests Package.swift scripts/create-icon.swift
+          swift test
+      - name: Import signing identity and notary credentials
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CERTIFICATE_BASE64" && test -n "$APPLE_ID" && test -n "$APPLE_PASSWORD" && test -n "$APPLE_TEAM_ID"
+          keychain="$RUNNER_TEMP/feather-release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "::add-mask::$keychain_password"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/feather-release.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/feather-release.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          xcrun notarytool store-credentials feather-release --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --keychain "$keychain"
+          security default-keychain -d user -s "$keychain"
+      - name: Build and notarize
+        env:
+          CODE_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_IDENTITY }}
+          FEATHER_RELEASE: '1'
+          NOTARY_PROFILE: feather-release
+        run: |
+          ./scripts/build-app.sh
+          ./scripts/package-release.sh
+      - name: Create reviewable release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/Feather-*.zip dist/Feather-*.sha256 --verify-tag --draft --title "Feather $RELEASE_TAG" --generate-notes
+      - name: Remove temporary credentials
+        if: always()
+        run: |
+          security default-keychain -d user -s login.keychain-db || true
+          security delete-keychain "$RUNNER_TEMP/feather-release.keychain-db" || true
+          rm -f "$RUNNER_TEMP/feather-release.p12"

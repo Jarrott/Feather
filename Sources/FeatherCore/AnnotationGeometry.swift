@@ -1,22 +1,13 @@
-import AppKit
+import CoreGraphics
+import Foundation
 
 /// 标注命中、选择边界与拖动约束；输入输出均为原图像素，不改变图像或编辑历史。
-@MainActor
 public enum AnnotationGeometry {
-  /// 文字测量与渲染共用同一字体，确保文字可点击区域与实际输出一致。
-  public static func textFont(for annotation: Annotation) -> NSFont {
-    NSFont.systemFont(ofSize: max(18, annotation.lineWidth * 5), weight: .semibold)
-  }
-
   /// 返回完整标注的包围盒；画笔计算所有采样点，箭头包括箭头头部，文字按真实字体测量。
   public static func bounds(of annotation: Annotation) -> CGRect {
     guard let start = annotation.points.first else { return .zero }
     if annotation.tool == .text {
-      return CGRect(
-        origin: start,
-        size: (annotation.text as NSString).size(withAttributes: [
-          .font: textFont(for: annotation)
-        ]))
+      return CGRect(origin: start, size: TextLayout.size(of: annotation))
     }
     if annotation.points.count == 1 { return CGRect(origin: start, size: .zero) }
     let path = outline(of: annotation)
@@ -35,7 +26,7 @@ public enum AnnotationGeometry {
       return false
     }
     switch annotation.tool {
-    case .text, .highlight, .redact:
+    case .text, .highlight, .redact, .mosaic:
       return bounds(of: annotation).insetBy(dx: -tolerance, dy: -tolerance).contains(point)
     case .pen where annotation.points.count == 1:
       let start = annotation.points[0]
@@ -78,7 +69,7 @@ public enum AnnotationGeometry {
   private static func outline(of annotation: Annotation) -> CGPath {
     let path = CGMutablePath()
     switch annotation.tool {
-    case .rectangle, .highlight, .redact: path.addRect(annotation.rect)
+    case .rectangle, .highlight, .redact, .mosaic: path.addRect(annotation.rect)
     case .ellipse: path.addEllipse(in: annotation.rect)
     default:
       if let start = annotation.points.first {

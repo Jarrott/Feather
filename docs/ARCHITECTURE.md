@@ -1,71 +1,63 @@
 # 架构与生命周期
 
 ## 模块
+
 ```text
-FeatherApp / AppDelegate
-├── NSStatusItem：左键截图 / 右键菜单
-├── AppModel → UserDefaults（设置）
-├── PreferencesView → ShortcutSettingsView（按需窗口）
-├── HotKeyService → Carbon RegisterEventHotKey
-├── ShortcutRecorder → 当前窗口临时 NSEvent 本地监听 → CaptureShortcut
-└── CaptureCoordinator → ScreenCaptureService → ScreenCapturePipeline → ScreenCaptureKit 单次帧
-    └── SelectionView：冻结画面 / 选区 / 标注
-        ├── CaptureToolbar → EditorDocument
-        └── FeatherCore
-            ├── CaptureGeometry / SelectionGeometry
-            ├── Annotation / AnnotationHistory
-            ├── AnnotationGeometry / AnnotationRenderer
-            └── PNGExporter
+AppDelegate / AppModel → 菜单栏、快捷键、设置、SavedRegion
+├── CaptureCoordinator → ScreenCaptureService → ScreenCaptureKit 单次帧
+│   ├── ScreenCapturePipeline：多屏并发、轻量过滤器缓存
+│   └── SelectionView：冻结图、编辑文档、工具条布局
+│       ├── SelectionInteraction：单一活动手势状态
+│       ├── SelectionRendering：CALayer 冻结图、遮罩、局部动态绘制
+│       ├── SelectionInput：键盘映射、VoiceOver 动作
+│       └── InlineTextEditor：原生文本输入与提交
+├── WindowCapturePicker：用户选择窗口，无缩略图预取
+├── EditorDocument → 后台渲染/编码/写入 → 主线程输出状态
+│   ├── FeatherCore：坐标、历史、CoreText、PNG、文件名模板
+│   └── PasteboardWriter：备份、替换、条件恢复
+└── PinnedImageController：最多八张内存贴图
 ```
 
-## 状态与窗口
-- 启动设置 accessory 激活策略，不创建工作台或 Dock 图标。NSStatusItem 分发左右点击，右键时弹出 NSMenu。
-- 设置窗口按需创建；关闭时释放其内容视图，录制器通过窗口通知/onDisappear 清理监听。
-- 一次截图对应一个 CaptureCoordinator：截屏 → 多屏框选 → 保留目标屏覆盖层并添加工具条 → 输出或取消 → 释放。
-- 框选用 screenSaver 层级，选中后降为 floating，文字和保存面板使用 modalPanel 层级。
-- 重复截图聚焦现有会话，不创建第二份图像或第二组覆盖层。导出期间阻止取消与退出。
-- UI、AppKit 渲染和窗口管理均为 @MainActor；ScreenCaptureKit 异步取单帧，不创建 SCStream。
-- PNG 无标注时直接由 ImageIO 编码裁剪图，避免全图重绘；有标注时只合成一次，保留源 RGB 色域（非 RGB 回退 sRGB）。磁盘写入在后台 Task 完成。
-- ScreenCapturePipeline 以显示器 ID、frame 和 backingScaleFactor 为缓存键，只复用按应用排除自身窗口的过滤器。无法枚举自身应用时使用当次窗口列表且不缓存；显示器变化、捕捉错误/取消后重新准备。
-- 多屏静态取图使用结构化任务组并发执行，按原显示器顺序收集。所有帧完成后一次性显示覆盖层，防止捕捉到新建覆盖层；任一失败不呈现部分结果。无固定等待、没有空闲预取或常驻 SCStream。
-- 快速保存先写同目录暂存文件，再用 renamex_np(RENAME_EXCL) 原子发布，拒绝覆盖，失败清理暂存文件。
-- 保存成功后按设置复制，所有输出成功才关闭；失败继续保留图片、选区和标注。
-- 确认按钮、键盘确认和所有工具下双击共用 EditorDocument.copy(closeAfter: true)。系统 NSEvent.clickCount 识别双击，优先于标注命中；绿框手柄优先缩放。首击产生的小标记保存变更前历史，确认时恢复，保留原有重做分支。文档默认写系统剪贴板，测试注入独立剪贴板验证实际 PNG。
-- 文字工具单击启动短生命周期 MainActor Task，等待系统双击间隔后请求输入；新点击、文档状态变化或窗口移除取消 Task。没有常驻计时器或后台轮询；生产使用原生面板，测试注入文字输入器。
-- 取消标志、Task 取消和 finished 保证一次会话至多回调一次。
-- 激活时预检查仅更新 UI；主动截图直接调用 ScreenCaptureKit。真正 userDeclined 才显示授权恢复提示，普通捕捉失败独立处理，没有后台轮询。
+## 并发与导出
 
-## 快捷键
-- 录制临时监听当前设置窗口，完成/取消/失焦立即清理；无全局按键监听或事件注入。
-- 原热键在录制期间保持注册，Carbon 回调用于接受原组合，屏蔽截图动作。
-- 新热键先注册成功再释放旧热键；JSON 编码和注册均成功后才更新持久化设置。
-- 注册冲突保留旧组合；新旧键值比较仅使用物理键码和修饰键。
+- AppKit 窗口、输入、设置与剪贴板在 MainActor 上；`EditorDocument` 同步锁定导出并快照 CGImage、值类型标注和输出设置。
+- `Task.detached` 执行全部合成、编码和写盘，完成后返回 Data/URL/CGImage。导出期间禁止编辑、重复输出和退出，失败保留会话。
+- 渲染内核不依赖 AppKit，不标记 MainActor；文字使用 CoreText。每次测量/绘制创建独立排版对象，不跨线程复用 CTFrame/CTFramesetter。
+- 无标注 PNG 直接 ImageIO 编码原图；有标注时在源 RGB 色域合成一次。马赛克仅降采样指定区域，并尊重纯黑遮盖区域。
+- 剪贴板先准备新项目与最多 64 MiB 的原内容快照；备份失败即返回。写入失败后仅在 changeCount 未变化时恢复，避免覆盖其他应用的新内容。恢复是尽力而为，系统接口无跨进程原子事务。
 
-## 坐标与选区变化
-- SelectionView 采用左上角原点的 flipped 坐标，显示器全局位置仅用于放置覆盖窗口。
-- 截图宽高优先为 SCContentFilter.contentRect.size × pointPixelScale；无效时回退显示器逻辑大小 × backingScaleFactor。裁剪始终按实际 CGImage 尺寸分别计算 X/Y 比例，向外像素取整。
-- 八个手柄固定对边，保留至少 4 逻辑点；移动保持大小，并限制到当前屏幕。
-- 选区调整从原始冻结图重裁剪；标注和重做栈偏移量为「旧裁剪像素原点 − 新原点」，保持屏幕锚点。
-- AnnotationGeometry 统一标注包围盒、轮廓命中、文字字体和箭头头部；按逆绘制顺序命中，Option 跳过命中。拖动保存原标注并只预览平移副本，抬起后由 EditorDocument 提交一次移动。
-- AnnotationHistory 保存新增与相对移动两类记录，最多 200 步；移动记录仅保存 ID 和位移，不重复存储整条画笔路径。裁剪变化迁移当前标注和新增记录，移动记录的相对偏移保持不变。
-- 标注与导出使用原图像素；预览直接绘制 CGImage 并禁用像素插值，工具条和选中标注的虚线辅助框独立于图片渲染，不进入 PNG。
-- SelectionView 持有主工具条与属性卡片两个 NSHostingView；主工具条尺寸固定，属性按当前工具/导出状态按需显示。SelectionGeometry 分别约束位置，属性优先向选区外侧展开。
-- CaptureStyle 提供统一选框颜色与工具条状态；小面积 HUD 使用窗口内 NSVisualEffectView 材质，不引入额外屏幕捕获、计时器或依赖。
+## 捕捉和会话
 
-## 内存与隐私
-- 框选前暂存逐屏静态帧；选定后释放其他显示器覆盖层，保留目标屏原图以支持调整选区。
-- 完成或取消关闭并释放全部截图窗口、图像和工具条；服务仅保留轻量系统过滤器，空闲时不截图、不轮询、不联网。
-- 无历史列表、数据库、HTTP API、服务端、上传、自动更新器或遥测。
-- 截图权限由系统 TCC 管理，不修改授权数据库。
-- 未保存内容仅存在内存；Esc/×/右键选区立即放弃，退出应用也不会自动保存。
+- 捕捉由用户触发，系统每次检查权限。仅 `SCStreamError.userDeclined` 更新为拒绝；普通错误、取消不改变权限状态。
+- 启动权限状态未知，不读取 `CGPreflightScreenCaptureAccess()`；无后台权限轮询。
+- 多屏通过结构化任务组并行取静态图，按原屏幕顺序组装；过滤器以 ID/frame/缩放为缓存键，屏幕变化、失败或取消使其失效。缓存不包含图像或授权。
+- 窗口截图使用 desktopIndependentWindow 过滤器，不等同于桌面裁剪。用户选择窗口后才取图；窗口关闭导致的错误走统一失败流程。
+- 框选前屏幕参数变化取消请求；编辑中落定手势/文字并保留原始 CGImage 与历史，窗口等比例适配可用屏幕。没有屏幕时等待恢复，不重新采集。
+- 覆盖层保持 screenSaver 层级，另存为面板高一层；区域内内联文本不需要模态窗口。
+- 会话只结束一次。成功输出记录上次显示器 ID/归一化区域，窗口截图除外；取消不覆盖上次成功区域。
 
-## 构建与发行
-- Swift Package 构建执行文件，脚本将执行文件和本地化 bundle 装入标准 .app。
-- 默认按构建机器架构生成；源码支持 arm64 和 x86_64，需分别实机验证。
-- 签名从 CODE_SIGN_IDENTITY 或本机 .signing-identity 读取，默认要求固定身份；正式发行需要 Developer ID Application 和公证。
-- 构建在暂存 app 内完成并验证签名，成功后替换 dist 产物，仅保留一个 .build/Feather-previous.app 回滚副本；不会原地覆写运行中的可执行文件。
-- ad-hoc 仅允许显式选择并输出警告；不通过自定义宽松 designated requirement 掩盖签名变化。
-- 保持 bundle ID com.feather.screenshot；稳定安装路径和签名身份可降低重新授权概率。
-- 系统权限、多屏和多版本交互必须按 TESTING.md 验收。
+## 绘制与坐标
 
-系统配置参考：[Apple SCStreamConfiguration](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration)。
+- SelectionView 使用左上原点的屏幕局部逻辑点；标注和裁剪历史使用原图像素。
+- 截图尺寸为系统内容点尺寸 × 像素比例；裁剪向外取整，对接近整数的浮点误差先对齐，避免重复区域逐次膨胀。
+- FrozenImageView 一次将源图交给 CALayer.contents；CAShapeLayer 只更新遮罩孔洞，禁止隐式动画。
+- AnnotationCanvasView 是透明动态层。按新旧标注/预览/选中边界计算脏区，只渲染与脏区相交的标注。选区变化才更新遮罩和尺寸。
+- 文本布局、命中包围盒和导出共用 TextLayout；输入使用 NSTextView，存储独立像素字号。预览输入字体换算为逻辑点。
+- SelectionInteraction 将起点、原选区和预览标注打包到互斥枚举状态；双击首击历史及延迟文字任务单独管理，切换/输出/窗口关闭取消待输入任务。
+
+## 编辑历史与持久化
+
+- AnnotationHistory 统一记录新增、相对移动、带原层级的删除、前后文字替换及前后裁剪矩形，最多 200 步。
+- 裁剪拖动期间预览，抬起后记录一步；当前标注和历史中的绝对坐标同步平移，相对移动和全图裁剪矩形不变。
+- 撤销裁剪根据源 CGImage 重新切片，不持有每一步全屏副本。选择辅助线、输入框不属于标注输出。
+- UserDefaults 仅存设置、快捷键 JSON 和上次区域几何。截图/标注/贴图只在内存，保存才写 PNG。
+- 文件名模板验证占位符与单文件名边界；同目录暂存 + renamex_np(RENAME_EXCL)，重名最多重试 1,000 次。
+
+## 构建和发行
+
+- Swift Package，无第三方依赖，macOS 14+。Bundle ID 保留 `com.feather.screenshot`，避免无必要的权限身份迁移。
+- 默认读取本机 `.signing-identity` 或 CODE_SIGN_IDENTITY，固定签名；暂存应用完成签名验证后再替换 dist，只保留一个回滚副本。
+- CI 使用 macOS runner 执行格式、测试和显式 ad-hoc 验证构建，不将其当作正式发行。
+- 正式发行单独启用 hardened runtime/时间戳，要求 Developer ID 签名、公证、staple 和 Gatekeeper 验证；人工触发工作流创建 Release 草稿。详见 [发行说明](RELEASING.md)。
+
+参考：[Apple CoreText 线程规则](https://developer.apple.com/documentation/CoreText)、[SCContentFilter](https://developer.apple.com/documentation/screencapturekit/sccontentfilter)。

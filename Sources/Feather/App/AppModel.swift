@@ -1,11 +1,17 @@
 import AppKit
+import FeatherCore
 import SwiftUI
 
 /// 应用状态和小型偏好存储；只持久化设置，不保存截图副本或历史文件路径。
 @MainActor
 final class AppModel: ObservableObject {
   @Published var isCapturing = false
-  @Published var permissionGranted = CGPreflightScreenCaptureAccess()
+  @Published var permissionGranted = false { didSet { permissionKnown = true } }
+  @Published private(set) var permissionKnown = false
+  @Published private(set) var filenameTemplate: String
+  var lastRegion: SavedRegion? {
+    didSet { defaults.set(try? JSONEncoder().encode(lastRegion), forKey: "lastRegion") }
+  }
   @Published var status: String?
   @Published var error: String?
   @Published private(set) var shortcut: CaptureShortcut
@@ -26,6 +32,12 @@ final class AppModel: ObservableObject {
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
+    filenameTemplate =
+      (try? FilenameTemplate.validated(defaults.string(forKey: "filenameTemplate") ?? ""))
+      ?? FilenameTemplate.defaultValue
+    lastRegion = defaults.data(forKey: "lastRegion").flatMap {
+      try? JSONDecoder().decode(SavedRegion.self, from: $0)
+    }
     shortcut =
       defaults.data(forKey: "customShortcut").flatMap {
         try? JSONDecoder().decode(CaptureShortcut.self, from: $0)
@@ -38,6 +50,19 @@ final class AppModel: ObservableObject {
     copyAfterSave = defaults.object(forKey: "copyAfterSave") as? Bool ?? true
     showCursor = defaults.bool(forKey: "showCursor")
 
+  }
+
+  /// 仅在模板通过校验后持久化；输入错误保留之前的有效设置。
+  func setFilenameTemplate(_ value: String) -> Bool {
+    do {
+      filenameTemplate = try FilenameTemplate.validated(value)
+      defaults.set(filenameTemplate, forKey: "filenameTemplate")
+      error = nil
+      return true
+    } catch {
+      self.error = EditorDocument.message(for: error)
+      return false
+    }
   }
 
   /// 先编码并注册，再持久化快捷键；注册或编码失败时保留原设置并展示错误。

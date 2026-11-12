@@ -41,11 +41,16 @@ public enum CaptureGeometry {
     else { return nil }
     let scaleX = imageSize.width / viewSize.width
     let scaleY = imageSize.height / viewSize.height
-    let rect = CGRect(
-      x: selection.minX * scaleX, y: selection.minY * scaleY,
-      width: selection.width * scaleX, height: selection.height * scaleY
-    )
-    .integral.intersection(CGRect(origin: .zero, size: imageSize))
+    // 消除像素→逻辑点→像素往返的浮点误差，避免重复截图逐次增加一行或一列。
+    func aligned(_ value: CGFloat) -> CGFloat {
+      abs(value - value.rounded()) < 0.00000001 ? value.rounded() : value
+    }
+    let left = floor(aligned(selection.minX * scaleX))
+    let top = floor(aligned(selection.minY * scaleY))
+    let right = ceil(aligned(selection.maxX * scaleX))
+    let bottom = ceil(aligned(selection.maxY * scaleY))
+    let rect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+      .intersection(CGRect(origin: .zero, size: imageSize))
     return rect.isEmpty || rect.isNull ? nil : rect
   }
 

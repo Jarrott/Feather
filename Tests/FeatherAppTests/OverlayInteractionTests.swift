@@ -82,6 +82,7 @@ struct OverlayInteractionTests {
       try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 1)
       #expect(closeCount == 0 && pasteboard.data(forType: .png) == nil)
       try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 2)
+      await document.exportTask?.value
       #expect(closeCount == 1 && document.error == nil)
       #expect(document.history.annotations == annotations)
       #expect(document.savedURL == nil)
@@ -98,9 +99,12 @@ struct OverlayInteractionTests {
       var closeCount = 0
       document.onClose = { closeCount += 1 }
       try click(view, window: window, at: CGPoint(x: 500, y: 200), count: 2)
+      await document.exportTask?.value
       try click(view, window: window, at: CGPoint(x: 102, y: 102), count: 2)
+      await document.exportTask?.value
       document.isExporting = true
       try click(view, window: window, at: CGPoint(x: 200, y: 200), count: 2)
+      await document.exportTask?.value
       #expect(closeCount == 0 && pasteboard.data(forType: .png) == nil)
       #expect(document.history.annotations.isEmpty)
     }
@@ -131,6 +135,7 @@ struct OverlayInteractionTests {
       await Task.yield()
       try click(view, window: window, at: CGPoint(x: 300, y: 250), count: 1)
       try click(view, window: window, at: CGPoint(x: 300, y: 250), count: 2)
+      await document.exportTask?.value
       try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.05))
       #expect(closeCount == 1 && textRequests == 0)
       #expect(document.history.annotations == annotations && document.history.canRedo)
@@ -151,6 +156,7 @@ struct OverlayInteractionTests {
         with: try mouse(.leftMouseDown, point: CGPoint(x: 300, y: 250), window: window))
       view.mouseUp(with: try mouse(.leftMouseUp, point: CGPoint(x: 302, y: 251), window: window))
       try click(view, window: window, at: CGPoint(x: 302, y: 251), count: 2)
+      await document.exportTask?.value
       #expect(closeCount == 1 && document.history.annotations.isEmpty)
       #expect(pasteboard.data(forType: .png) != nil)
     }
@@ -175,6 +181,7 @@ struct OverlayInteractionTests {
       #expect(document.history.annotations == [moved])
       try click(view, window: window, at: point(300, 260), count: 1)
       try click(view, window: window, at: point(300, 260), count: 2)
+      await document.exportTask?.value
       let data = try #require(pasteboard.data(forType: .png))
       let bitmap = try #require(NSBitmapImageRep(data: data))
       #expect(bitmap.pixelsWide == 300 && bitmap.pixelsHigh == 200)
@@ -224,9 +231,92 @@ struct OverlayInteractionTests {
     }
   }
 
+  @Test func deleteAndKeypadEnterUseSelectedAnnotationAndAsyncExport() async throws {
+    try await withSelection { view, document, window, pasteboard in
+      let annotation = Annotation(
+        tool: .rectangle,
+        points: [CGPoint(x: 20, y: 20), CGPoint(x: 120, y: 120)], color: .palette[0])
+      document.add(annotation)
+      try click(view, window: window, at: CGPoint(x: 120, y: 170), count: 1)
+      view.keyDown(with: try key(51, window: window))
+      #expect(document.history.annotations.isEmpty)
+      document.undo()
+      #expect(document.history.annotations == [annotation])
+      view.keyDown(with: try key(76, window: window))
+      #expect(document.isExporting)
+      await document.exportTask?.value
+      #expect(pasteboard.data(forType: .png) != nil)
+    }
+  }
+
+  @Test func inlineTextCanEditSizeAndUndoWithoutAlerts() async throws {
+    try await withSelection { view, document, window, _ in
+      document.selectTool(.text)
+      view.beginText(at: CGPoint(x: 20, y: 20), existing: nil)
+      let editor = try #require(view.textEditor)
+      editor.textView.string = "第一行\nSecond line"
+      document.fontSize = 42
+      view.finishText(commit: true)
+      let initial = try #require(document.history.annotations.first)
+      #expect(initial.fontSize == 42 && initial.text.contains("\n"))
+      view.keyDown(with: try key(120, window: window))
+      let edit = try #require(view.textEditor)
+      edit.textView.string = "Edited"
+      document.fontSize = 56
+      view.finishText(commit: true)
+      #expect(document.history.annotations.first?.fontSize == 56)
+      #expect(document.history.annotations.first?.id == initial.id)
+      document.undo()
+      #expect(document.history.annotations == [initial])
+      view.editSelectedText()
+      view.textEditor?.textView.string = "Cancel"
+      view.finishText(commit: false)
+      #expect(document.history.annotations == [initial])
+    }
+  }
+
+  @Test func cropHistoryRestoresImageAndAnnotationCoordinates() async throws {
+    try await withSelection { view, document, window, _ in
+      let initial = document.history.cropRect
+      let annotation = Annotation(tool: .pen, points: [CGPoint(x: 20, y: 20)], color: .palette[0])
+      document.add(annotation)
+      try drag(view, window: window, from: CGPoint(x: 250, y: 200), to: CGPoint(x: 280, y: 220))
+      let moved = document.history.cropRect
+      #expect(moved != initial)
+      document.undo()
+      view.refresh()
+      #expect(view.pixelRect == initial && document.history.annotations == [annotation])
+      document.redo()
+      view.refresh()
+      #expect(view.pixelRect == moved && document.image.width == 300)
+    }
+  }
+
+  @Test func longStrokeContinuesPastSamplingLimitWithNotice() async throws {
+    try await withSelection { view, document, window, _ in
+      let points = (0..<20_000).map { CGPoint(x: $0 % 200, y: $0 % 100) }
+      let annotation = Annotation(tool: .pen, points: points, color: .palette[0])
+      view.interaction = .drawing(CGPoint(x: 100, y: 100), annotation)
+      view.mouseDragged(
+        with: try mouse(.leftMouseDragged, point: CGPoint(x: 350, y: 270), window: window))
+      let pending = try #require(view.interaction.pending)
+      #expect(pending.points.count == 10_001)
+      #expect(pending.points.last == CGPoint(x: 250, y: 170))
+      #expect(document.status == L.text("editor.strokeSimplified"))
+    }
+  }
+
+  private func key(_ code: UInt16, window: NSWindow) throws -> NSEvent {
+    try #require(
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: [],
+        timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "",
+        charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
+  }
+
   /// 构造未显示的选区与独立剪贴板，结束后释放资源；不访问桌面、系统剪贴板或真实用户偏好。
   private func withSelection(
-    scale: CGFloat = 1, requestText: @escaping @MainActor () -> String? = { nil },
+    scale: CGFloat = 1, requestText: (@MainActor () -> String?)? = nil,
     _ body: @MainActor (SelectionView, EditorDocument, NSWindow, NSPasteboard) async throws -> Void
   ) async throws {
     _ = NSApplication.shared

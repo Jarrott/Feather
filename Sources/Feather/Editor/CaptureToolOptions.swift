@@ -10,10 +10,14 @@ struct CaptureToolOptions: View {
   static func preferredSize(for document: EditorDocument) -> CGSize? {
     if document.isExporting { return CGSize(width: 208, height: 58) }
     let hasOptions = !document.isSelectingRegion
-    guard hasOptions || document.error != nil else { return nil }
-    let width: CGFloat = document.error != nil ? 380 : document.tool == .highlight ? 216 : 360
+    guard hasOptions || document.error != nil || document.status != nil else { return nil }
+    let width: CGFloat =
+      (document.error != nil || document.status != nil)
+      ? 380 : document.tool == .highlight ? 216 : 360
     return CGSize(
-      width: width, height: 16 + (hasOptions ? 42 : 0) + (document.error != nil ? 52 : 0))
+      width: width,
+      height: 16 + (hasOptions ? 42 : 0)
+        + ((document.error != nil || document.status != nil) ? 52 : 0))
   }
 
   var body: some View {
@@ -26,10 +30,10 @@ struct CaptureToolOptions: View {
         }.frame(height: 42)
       } else {
         if !document.isSelectingRegion { options.frame(height: 42) }
-        if let error = document.error {
+        if let message = document.error ?? document.status {
           HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.circle").foregroundStyle(CaptureStyle.cancel)
-            Text(error).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Text(message).lineLimit(2).fixedSize(horizontal: false, vertical: true)
           }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.88))
             .frame(height: 52, alignment: .center)
         }
@@ -44,11 +48,11 @@ struct CaptureToolOptions: View {
 
   @ViewBuilder
   private var options: some View {
-    if document.tool == .redact {
+    if document.tool == .redact || document.tool == .mosaic {
       HStack(spacing: 10) {
         RoundedRectangle(cornerRadius: 2).fill(.black).frame(width: 18, height: 18)
           .overlay(RoundedRectangle(cornerRadius: 2).stroke(.white.opacity(0.35)))
-        Text(L.text("overlay.redactionHint"))
+        Text(L.text(document.tool == .mosaic ? "overlay.mosaicHint" : "overlay.redactionHint"))
         Spacer()
       }
     } else {
@@ -68,12 +72,15 @@ struct CaptureToolOptions: View {
         }
         if document.tool != .highlight {
           Rectangle().fill(.white.opacity(0.16)).frame(width: 1, height: 18).padding(.horizontal, 2)
-          Slider(value: $document.lineWidth, in: 2...16, step: 1)
-            .tint(CaptureStyle.accent).controlSize(.mini).frame(minWidth: 54, maxWidth: .infinity)
-            .accessibilityLabel(
-              L.text(document.tool == .text ? "overlay.fontSize" : "overlay.lineWidth"))
+          Slider(
+            value: document.tool == .text ? $document.fontSize : $document.lineWidth,
+            in: document.tool == .text ? 8...120 : 2...16, step: 1
+          )
+          .tint(CaptureStyle.accent).controlSize(.mini).frame(minWidth: 54, maxWidth: .infinity)
+          .accessibilityLabel(
+            L.text(document.tool == .text ? "overlay.fontSize" : "overlay.lineWidth"))
           Text(
-            "\(Int(document.tool == .text ? max(18, document.lineWidth * 5) : document.lineWidth)) px"
+            "\(Int(document.tool == .text ? document.fontSize : document.lineWidth)) px"
           )
           .font(.system(size: 10, design: .monospaced)).monospacedDigit().frame(
             width: 36, alignment: .trailing)

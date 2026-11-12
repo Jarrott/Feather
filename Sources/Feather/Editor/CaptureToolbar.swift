@@ -11,6 +11,7 @@ extension AnnotationTool {
     case .highlight: "highlighter"
     case .text: "t.square"
     case .redact: "rectangle.lefthalf.filled"
+    case .mosaic: "square.grid.3x3"
     }
   }
   var title: String { L.text("tool.\(rawValue)") }
@@ -20,23 +21,23 @@ extension AnnotationTool {
 struct CaptureToolbar: View {
   @ObservedObject var document: EditorDocument
   let onCancel: () -> Void
-  static let preferredSize = CGSize(width: 600, height: 64)
+  static let preferredSize = CGSize(width: 680, height: 64)
 
   var body: some View {
     HStack(spacing: 4) {
-      ForEach(Array(AnnotationTool.allCases.enumerated()), id: \.element) { index, tool in
+      ForEach(AnnotationTool.allCases, id: \.self) { tool in
         let selected = !document.isSelectingRegion && document.tool == tool
         CaptureToolButton(
-          icon: tool.symbol, title: "\(tool.title) (\(index + 1))",
+          icon: tool.symbol, title: "\(tool.title) (\(tool.shortcut))",
           hint: selected ? L.text("overlay.deselect") : nil, selected: selected
         ) { document.selectTool(tool, toggleSelection: true) }
       }
       divider
       CaptureToolButton(icon: "arrow.uturn.backward", title: L.text("shortcut.undo") + " (⌘Z)") {
-        document.history.undo()
+        document.undo()
       }.disabled(!document.history.canUndo)
       CaptureToolButton(icon: "arrow.uturn.forward", title: L.text("shortcut.redo") + " (⇧⌘Z)") {
-        document.history.redo()
+        document.redo()
       }.disabled(!document.history.canRedo)
       divider
       CaptureToolButton(icon: "square.and.arrow.down", title: L.text("shortcut.save") + " (⌘S)") {
@@ -44,6 +45,8 @@ struct CaptureToolbar: View {
       }.contextMenu {
         Button(L.text("shortcut.saveAs")) { document.save(asNewLocation: true, closeAfter: true) }
       }
+      CaptureToolButton(icon: "pin", title: L.text("editor.pin") + " (⌘P)") { document.pin() }
+        .disabled(document.onPin == nil)
       CaptureToolButton(icon: "xmark", title: L.text("overlay.cancel"), tint: CaptureStyle.cancel) {
         onCancel()
       }

@@ -1,4 +1,5 @@
 import AppKit
+import ScreenCaptureKit
 import SwiftUI
 
 /// 仅常驻菜单栏；左键截图、右键设置，截图与标注共用一次覆盖层会话。
@@ -10,6 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
   private let statusMenu = NSMenu()
   private var settingsWindow: NSWindow?
   private var coordinator: CaptureCoordinator?
+  private var windowPicker: WindowCapturePicker?
+  private var windowCaptureTask: Task<Void, Never>?
+  private let pinnedImages = PinnedImageController()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
@@ -27,16 +31,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     setShortcut(model.shortcut)
   }
 
-  func applicationDidBecomeActive(_ notification: Notification) {
-    model.permissionGranted = CGPreflightScreenCaptureAccess()
-  }
-
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    coordinator?.isExporting == true ? .terminateCancel : .terminateNow
+    coordinator?.isExporting == true || pinnedImages.isExporting ? .terminateCancel : .terminateNow
   }
   func applicationWillTerminate(_ notification: Notification) {
     hotKeys.stop()
+    windowCaptureTask?.cancel()
     coordinator?.cancel()
   }
 
@@ -80,40 +81,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
   }
 
   func menuWillOpen(_ menu: NSMenu) {
+    menu.items.first(where: { $0.action == #selector(captureLastRegion) })?.isEnabled =
+      model.lastRegion != nil
+    menu.items.first(where: { $0.action == #selector(captureWindow) })?.isEnabled =
+      coordinator == nil && windowCaptureTask == nil
     menu.items.first(where: { $0.action == #selector(showSettings) })?.isEnabled =
       coordinator == nil
   }
 
   /// 用户主动截图时直接尝试 ScreenCaptureKit，由系统验证授权；重复触发聚焦现有选区。
   /// 不使用可能滞后的预检查拦截请求，实际授权拒绝和普通捕捉错误分开处理。
-  @objc private func beginCapture() {
+  @objc private func beginCapture() { startCapture(mode: .region) }
+  @objc private func captureFullScreen() { startCapture(mode: .fullScreen) }
+  @objc private func captureLastRegion() { startCapture(mode: .lastRegion) }
+
+  /// 窗口选择和捕捉只在主动请求时发生；等待期间忽略重复请求，关闭选择器不开始截图。
+  @objc private func captureWindow() {
+    guard coordinator == nil, windowCaptureTask == nil, !model.isRecordingShortcut else {
+      coordinator?.focus()
+      windowPicker?.focus()
+      return
+    }
+    settingsWindow?.close()
+    windowCaptureTask = Task { [weak self] in
+      guard let self else { return }
+      defer {
+        self.windowCaptureTask = nil
+        self.windowPicker = nil
+      }
+      do {
+        let windows = try await ScreenCaptureService.availableWindows()
+        try Task.checkCancellation()
+        let picker = WindowCapturePicker()
+        self.windowPicker = picker
+        guard let windowID = await picker.select(from: windows), !Task.isCancelled,
+          let window = windows.first(where: { $0.windowID == windowID })
+        else { return }
+        self.windowPicker = nil
+        self.startCapture(mode: .window, window: window)
+      } catch is CancellationError {} catch { self.presentCaptureError(error) }
+    }
+  }
+
+  /// 创建区域、全屏、上次区域或窗口会话；重复触发始终复用当前会话。
+  private func startCapture(mode: CaptureMode, window: SCWindow? = nil) {
     guard !model.isRecordingShortcut else { return }
     if let coordinator {
       coordinator.focus()
       return
     }
+    if windowPicker != nil {
+      windowPicker?.focus()
+      return
+    }
+    if windowCaptureTask != nil, window == nil { return }
     model.error = nil
     settingsWindow?.close()
-    let capture = CaptureCoordinator(model: model)
+    let capture: CaptureCoordinator
+    if let window {
+      capture = CaptureCoordinator(model: model, mode: .window) { showCursor in
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+          throw CaptureError.noDisplay
+        }
+        let image = try await ScreenCaptureService.capture(window: window, showCursor: showCursor)
+        return [ScreenSnapshot(screen: screen, image: image)]
+      }
+    } else {
+      capture = CaptureCoordinator(model: model, mode: mode)
+    }
+    capture.onPin = { [weak self] image in
+      guard let self else { return false }
+      return self.pinnedImages.pin(image, model: self.model)
+    }
     coordinator = capture
     model.isCapturing = true
     capture.onComplete = { [weak self] in
       self?.model.isCapturing = false
       self?.coordinator = nil
     }
-    capture.onError = { [weak self] error in
-      guard let self else { return }
-      if ScreenCaptureService.isPermissionDenied(error) {
-        self.showPermissionRecovery()
-        return
-      }
-      self.model.error = error.localizedDescription
-      let alert = NSAlert()
-      alert.messageText = L.text("capture.failed")
-      alert.informativeText = error.localizedDescription
-      alert.runModal()
-    }
+    capture.onError = { [weak self] error in self?.presentCaptureError(error) }
     capture.start()
+  }
+
+  /// 所有截图入口共用错误分类，普通失败不修改已知权限状态。
+  private func presentCaptureError(_ error: Error) {
+    if ScreenCaptureService.isPermissionDenied(error) {
+      model.permissionGranted = false
+      showPermissionRecovery()
+      return
+    }
+    model.error = error.localizedDescription
+    let alert = NSAlert()
+    alert.messageText = L.text("capture.failed")
+    alert.informativeText = error.localizedDescription
+    alert.runModal()
   }
 
   /// 仅在系统实际拒绝后提供设置和当前应用定位入口；授权与重启必须由用户完成。
@@ -143,6 +204,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     return true
   }
 
+  /// 只在用户点击时打开公开发布页，不进行后台更新检查或联网。
+  @objc private func openReleases() {
+    if let url = URL(string: "https://github.com/Jarrott/Feather/releases") {
+      NSWorkspace.shared.open(url)
+    }
+  }
+
   private func buildStatusItem() {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     item.button?.image = NSImage(
@@ -156,8 +224,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     statusMenu.addItem(
       withTitle: L.text("capture.start"), action: #selector(beginCapture), keyEquivalent: "")
     statusMenu.addItem(
+      withTitle: L.text("capture.fullScreen"), action: #selector(captureFullScreen),
+      keyEquivalent: "")
+    statusMenu.addItem(
+      withTitle: L.text("capture.window"), action: #selector(captureWindow), keyEquivalent: "")
+    statusMenu.addItem(
+      withTitle: L.text("capture.lastRegion"), action: #selector(captureLastRegion),
+      keyEquivalent: "")
+    statusMenu.addItem(.separator())
+    statusMenu.addItem(
       withTitle: L.text("nav.settings"), action: #selector(showSettings), keyEquivalent: "")
     statusMenu.addItem(.separator())
+    statusMenu.addItem(
+      withTitle: L.text("menu.releases"), action: #selector(openReleases), keyEquivalent: "")
     statusMenu.addItem(
       withTitle: L.text("menu.quit"), action: #selector(NSApplication.terminate(_:)),
       keyEquivalent: "q")

@@ -85,3 +85,31 @@ enum ScreenCaptureService {
       && error.code == SCStreamError.Code.userDeclined.rawValue
   }
 }
+
+extension ScreenCaptureService {
+  /// 用户打开窗口截图时枚举可见普通窗口，排除自身；授权拒绝仍由系统原样抛出。
+  static func availableWindows() async throws -> [SCWindow] {
+    let content = try await SCShareableContent.excludingDesktopWindows(
+      true, onScreenWindowsOnly: true)
+    return content.windows.filter {
+      $0.isOnScreen && $0.windowLayer == 0 && $0.frame.width >= 4 && $0.frame.height >= 4
+        && $0.owningApplication?.processID != ProcessInfo.processInfo.processIdentifier
+    }.sorted {
+      ($0.owningApplication?.applicationName ?? "") < ($1.owningApplication?.applicationName ?? "")
+    }
+  }
+
+  /// 独立窗口过滤器可捕捉被遮挡窗口，不把周围桌面纳入输出；窗口关闭或权限变化正常报错。
+  static func capture(window: SCWindow, showCursor: Bool) async throws -> CGImage {
+    let filter = SCContentFilter(desktopIndependentWindow: window)
+    guard
+      let size = CaptureGeometry.capturePixelSize(
+        contentSize: filter.contentRect.size,
+        pointPixelScale: CGFloat(filter.pointPixelScale), fallbackSize: window.frame.size,
+        backingScale: NSScreen.main?.backingScaleFactor ?? 1)
+    else { throw CaptureError.noDisplay }
+    let config = configuration(pixelSize: size, showCursor: showCursor)
+    if #available(macOS 14.2, *) { config.ignoreShadowsSingleWindow = true }
+    return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+  }
+}
